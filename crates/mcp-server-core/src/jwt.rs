@@ -233,6 +233,23 @@ mod tests {
     }
 
     #[test]
+    fn other_issuer_is_rejected() {
+        let other = Jwt::new(
+            KEY,
+            "https://other.example.com",
+            "https://mail.example.com/mcp",
+        );
+        let t = other
+            .issue(
+                TokenKind::Access,
+                Some(Duration::from_secs(60)),
+                Payload::default(),
+            )
+            .unwrap();
+        assert!(jwt().verify(&t, TokenKind::Access).is_err());
+    }
+
+    #[test]
     fn other_key_is_rejected() {
         let other = Jwt::new(
             b"ffffffffffffffffffffffffffffffff",

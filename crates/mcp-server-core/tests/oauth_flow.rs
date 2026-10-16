@@ -1,8 +1,9 @@
 mod oauth_support;
+use axum::Extension;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::post;
-use mcp_server_core::jwt::{Payload, TokenKind};
+use mcp_server_core::jwt::{Claims, Payload, TokenKind};
 use mcp_server_core::server::build_app;
 use oauth_support::*;
 use serde_json::json;
@@ -80,6 +81,40 @@ async fn static_token_is_accepted_when_configured() {
             .status(),
         StatusCode::UNAUTHORIZED
     );
+}
+
+#[tokio::test]
+async fn handler_sees_claims_only_for_oauth_access_tokens() {
+    let st = state_with_static(Some("static-secret-token"));
+    let app = build_app(
+        st.clone(),
+        axum::Router::new().route(
+            "/mcp",
+            post(|claims: Option<Extension<Claims>>| async move {
+                match claims {
+                    Some(Extension(c)) => c.payload.client_id.unwrap_or_default(),
+                    None => "no-claims".to_string(),
+                }
+            }),
+        ),
+    );
+    let access = st
+        .jwt
+        .issue(
+            TokenKind::Access,
+            Some(Duration::from_secs(60)),
+            Payload {
+                client_id: Some("client-1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let res = send(&app, mcp_call(Some(&access))).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(body_text(res).await, "client-1");
+    let res = send(&app, mcp_call(Some("static-secret-token"))).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(body_text(res).await, "no-claims");
 }
 
 #[tokio::test]

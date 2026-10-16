@@ -80,9 +80,10 @@ async fn watch_certs(
     cert: PathBuf,
     key: PathBuf,
     shutdown: CancellationToken,
+    interval: Duration,
 ) {
     let mut last = (mtime(&cert), mtime(&key));
-    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    let mut tick = tokio::time::interval(interval);
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return,
@@ -104,11 +105,23 @@ async fn watch_certs(
     }
 }
 
+const CERT_RELOAD_INTERVAL: Duration = Duration::from_secs(30);
+
 pub async fn serve(
     app: Router,
     addr: SocketAddr,
     mode: TlsMode,
     shutdown: CancellationToken,
+) -> anyhow::Result<()> {
+    serve_with_reload_interval(app, addr, mode, shutdown, CERT_RELOAD_INTERVAL).await
+}
+
+pub(crate) async fn serve_with_reload_interval(
+    app: Router,
+    addr: SocketAddr,
+    mode: TlsMode,
+    shutdown: CancellationToken,
+    reload_interval: Duration,
 ) -> anyhow::Result<()> {
     let handle: Handle<SocketAddr> = Handle::new();
     let h = handle.clone();
@@ -133,7 +146,13 @@ pub async fn serve(
                         key.display()
                     )
                 })?;
-            tokio::spawn(watch_certs(config.clone(), cert, key, shutdown.clone()));
+            tokio::spawn(watch_certs(
+                config.clone(),
+                cert,
+                key,
+                shutdown.clone(),
+                reload_interval,
+            ));
             tracing::info!(%addr, "serving HTTPS with certificate from files");
             axum_server::bind_rustls(addr, config)
                 .handle(handle)
@@ -295,6 +314,94 @@ mod tests {
             panic!()
         };
         assert_eq!(sans, vec!["localhost", "127.0.0.1", "::1"]);
+    }
+
+    async fn served_fingerprint(port: u16) -> Option<String> {
+        let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .ok()?;
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let cfg = rustls::ClientConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .ok()?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAnyCert(provider)))
+            .with_no_client_auth();
+        let name = ServerName::try_from("localhost").ok()?;
+        let stream = tokio_rustls::TlsConnector::from(Arc::new(cfg))
+            .connect(name, tcp)
+            .await
+            .ok()?;
+        let der = stream.get_ref().1.peer_certificates()?.first()?.clone();
+        Some(
+            Sha256::digest(der.as_ref())
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<Vec<_>>()
+                .join(":"),
+        )
+    }
+
+    fn write_cert(cert: &Path, key: &Path, s: &SelfSigned, mtime: std::time::SystemTime) {
+        for (path, pem) in [(cert, &s.cert_pem), (key, &s.key_pem)] {
+            std::fs::write(path, pem).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(mtime)
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn file_mode_hot_reloads_rewritten_certificate() {
+        crate::install_crypto_provider();
+        let dir = tempfile::tempdir().unwrap();
+        let cert = dir.path().join("cert.pem");
+        let key = dir.path().join("key.pem");
+        let first = generate_self_signed(&["localhost".into()]).unwrap();
+        let start = std::time::SystemTime::now();
+        write_cert(&cert, &key, &first, start);
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let ct = CancellationToken::new();
+        let task = tokio::spawn(serve_with_reload_interval(
+            Router::new(),
+            SocketAddr::from(([127, 0, 0, 1], port)),
+            TlsMode::Files {
+                cert: cert.clone(),
+                key: key.clone(),
+            },
+            ct.clone(),
+            Duration::from_millis(100),
+        ));
+        let mut served = None;
+        for _ in 0..50 {
+            served = served_fingerprint(port).await;
+            if served.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(served.as_deref(), Some(first.fingerprint.as_str()));
+
+        let second = generate_self_signed(&["reloaded.example.com".into()]).unwrap();
+        assert_ne!(first.fingerprint, second.fingerprint);
+        write_cert(&cert, &key, &second, start + Duration::from_secs(10));
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            served = served_fingerprint(port).await;
+            if served.as_deref() == Some(second.fingerprint.as_str()) {
+                break;
+            }
+        }
+        assert_eq!(served.as_deref(), Some(second.fingerprint.as_str()));
+        ct.cancel();
+        task.await.unwrap().unwrap();
     }
 
     #[test]
