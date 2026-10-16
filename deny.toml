@@ -3,7 +3,9 @@ all-features = false
 
 [advisories]
 yanked = "deny"
-ignore = []
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "rsa is pulled in by jsonwebtoken rust_crypto but only HS256 (HMAC) is used in mcp-server-core/src/jwt.rs; no RSA signing or decryption occurs, and no patched rsa release exists" },
+]
 
 [licenses]
 allow = [
