@@ -4,6 +4,10 @@ ARG TARGETARCH
 ARG BUILDARCH
 ARG ZIG_VERSION=0.16.0
 ARG CARGO_ZIGBUILD_VERSION=0.23.4
+ARG ZIG_SHA256_X86_64=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+ARG ZIG_SHA256_AARCH64=ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
+ARG CARGO_ZIGBUILD_SHA256_X86_64=6b69963040818ca1ef573d8135a95aa902e17cf7f873c32c6426642dadfe7f59
+ARG CARGO_ZIGBUILD_SHA256_AARCH64=25cf2cdc6cde848b33a761ff2cf46d1efe6ba7e1adfc4b6f3ee2d570cacb5419
 ARG APP_VERSION=0.0.0-dev
 
 RUN apt-get update \
@@ -11,11 +15,19 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
-    case "$BUILDARCH" in amd64) HA=x86_64 ;; arm64) HA=aarch64 ;; *) echo "unsupported build arch $BUILDARCH"; exit 1 ;; esac; \
-    curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${HA}-linux-${ZIG_VERSION}.tar.xz" | tar -xJ -C /opt; \
+    case "$BUILDARCH" in \
+      amd64) HA=x86_64; ZIG_SHA="$ZIG_SHA256_X86_64"; ZB_SHA="$CARGO_ZIGBUILD_SHA256_X86_64" ;; \
+      arm64) HA=aarch64; ZIG_SHA="$ZIG_SHA256_AARCH64"; ZB_SHA="$CARGO_ZIGBUILD_SHA256_AARCH64" ;; \
+      *) echo "unsupported build arch $BUILDARCH"; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-${HA}-linux-${ZIG_VERSION}.tar.xz"; \
+    echo "${ZIG_SHA}  /tmp/zig.tar.xz" | sha256sum -c -; \
+    tar -xJf /tmp/zig.tar.xz -C /opt; \
     ln -s "/opt/zig-${HA}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig; \
-    curl -fsSL "https://github.com/rust-cross/cargo-zigbuild/releases/download/v${CARGO_ZIGBUILD_VERSION}/cargo-zigbuild-${HA}-unknown-linux-gnu.tar.xz" \
-      | tar -xJ -C /usr/local/bin --strip-components=1; \
+    curl -fsSL -o /tmp/cargo-zigbuild.tar.xz "https://github.com/rust-cross/cargo-zigbuild/releases/download/v${CARGO_ZIGBUILD_VERSION}/cargo-zigbuild-${HA}-unknown-linux-gnu.tar.xz"; \
+    echo "${ZB_SHA}  /tmp/cargo-zigbuild.tar.xz" | sha256sum -c -; \
+    tar -xJf /tmp/cargo-zigbuild.tar.xz -C /usr/local/bin --strip-components=1; \
+    rm /tmp/zig.tar.xz /tmp/cargo-zigbuild.tar.xz; \
     zig version; \
     cargo-zigbuild --version
 

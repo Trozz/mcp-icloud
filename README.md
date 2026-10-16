@@ -202,6 +202,8 @@ gh label create minor --color FBCA04 --description "Release: minor version bump"
 gh label create patch --color 0E8A16 --description "Release: patch version bump"
 ```
 
+Under **Settings > Actions > General > Workflow permissions**, the workflows must be allowed to grant `contents: write`, `packages: write`, `id-token: write` and `attestations: write` (the jobs request them explicitly through `permissions` blocks).
+
 After the first image is published, set the `mcp-icloud-mail` package visibility to public under **Packages** on GitHub if you want anonymous pulls.
 
 ## License
