@@ -1,6 +1,8 @@
 use super::fake_imap::FakeImap;
 use mcp_icloud_mail::cache::LruMessageCache;
-use mcp_icloud_mail::imap::{Connector, ImapClient, ImapSettings};
+use mcp_icloud_mail::imap::{
+    COMMAND_TIMEOUT, CONNECT_TIMEOUT, Connector, ImapClient, ImapSettings,
+};
 use mcp_icloud_mail::mail::build::Identity;
 use mcp_icloud_mail::smtp::Sender;
 use mcp_icloud_mail::tools::{MailServer, ToolSettings};
@@ -21,6 +23,8 @@ pub fn imap(fake: &FakeImap) -> Arc<ImapClient> {
             username: ME.into(),
             password: "app-pass".to_string().into(),
             idle_timeout: Duration::from_secs(600),
+            connect_timeout: CONNECT_TIMEOUT,
+            command_timeout: COMMAND_TIMEOUT,
         },
         Arc::new(LruMessageCache::new(1024 * 1024)),
     ))

@@ -1,7 +1,9 @@
 mod support;
 use mcp_icloud_mail::cache::LruMessageCache;
 use mcp_icloud_mail::error::MailError;
-use mcp_icloud_mail::imap::{Connector, ImapClient, ImapSettings, SearchQuery};
+use mcp_icloud_mail::imap::{
+    COMMAND_TIMEOUT, CONNECT_TIMEOUT, Connector, ImapClient, ImapSettings, SearchQuery,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use support::fake_imap::{FakeImap, FakeState};
@@ -15,6 +17,8 @@ fn client(fake: &FakeImap) -> ImapClient {
             username: "me@icloud.com".into(),
             password: "app-pass".to_string().into(),
             idle_timeout: Duration::from_secs(600),
+            connect_timeout: CONNECT_TIMEOUT,
+            command_timeout: COMMAND_TIMEOUT,
         },
         Arc::new(LruMessageCache::new(1024 * 1024)),
     )

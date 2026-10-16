@@ -1,7 +1,9 @@
 mod support;
 use mcp_icloud_mail::cache::LruMessageCache;
 use mcp_icloud_mail::error::MailError;
-use mcp_icloud_mail::imap::{Connector, ImapClient, ImapSettings, Role};
+use mcp_icloud_mail::imap::{
+    COMMAND_TIMEOUT, CONNECT_TIMEOUT, Connector, ImapClient, ImapSettings, Role,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use support::fake_imap::{FakeImap, FakeState};
@@ -15,6 +17,8 @@ fn client(fake: &FakeImap, password: &str) -> ImapClient {
             username: "me@icloud.com".into(),
             password: password.to_string().into(),
             idle_timeout: Duration::from_secs(600),
+            connect_timeout: CONNECT_TIMEOUT,
+            command_timeout: COMMAND_TIMEOUT,
         },
         Arc::new(LruMessageCache::new(1024 * 1024)),
     )
@@ -111,6 +115,8 @@ async fn idle_timeout_reconnects() {
         username: "me@icloud.com".into(),
         password: "app-pass".to_string().into(),
         idle_timeout: Duration::from_millis(10),
+        connect_timeout: CONNECT_TIMEOUT,
+        command_timeout: COMMAND_TIMEOUT,
     };
     settings.idle_timeout = Duration::from_millis(10);
     let c = ImapClient::new(settings, Arc::new(LruMessageCache::new(0)));
@@ -121,4 +127,64 @@ async fn idle_timeout_reconnects() {
         fake.log().iter().filter(|l| l.starts_with("LOGIN")).count(),
         2
     );
+}
+
+fn quick(fake: &FakeImap) -> ImapClient {
+    ImapClient::new(
+        ImapSettings {
+            connector: Connector::Plain {
+                addr: fake.addr.clone(),
+            },
+            username: "me@icloud.com".into(),
+            password: "app-pass".to_string().into(),
+            idle_timeout: Duration::from_secs(600),
+            connect_timeout: Duration::from_millis(200),
+            command_timeout: Duration::from_millis(200),
+        },
+        Arc::new(LruMessageCache::new(0)),
+    )
+}
+
+const NO_HANG: Duration = Duration::from_secs(2);
+
+#[tokio::test]
+async fn stalled_login_times_out() {
+    let fake = FakeImap::start(FakeState::icloud_like()).await;
+    fake.state.lock().unwrap().stall_on = Some("LOGIN".into());
+    let err = tokio::time::timeout(NO_HANG, quick(&fake).mailboxes())
+        .await
+        .expect("connect must time out")
+        .unwrap_err();
+    assert!(err.is_connection(), "{err}");
+}
+
+#[tokio::test]
+async fn stalled_mutation_times_out_drops_the_connection_and_is_not_retried() {
+    let fake = FakeImap::start(FakeState::icloud_like()).await;
+    let c = quick(&fake);
+    c.uidvalidity("INBOX", None).await.unwrap();
+    fake.state.lock().unwrap().stall_on = Some("STORE".into());
+    let err = tokio::time::timeout(NO_HANG, c.set_flags("INBOX", &[1], None, "\\Seen", true))
+        .await
+        .expect("command must time out")
+        .unwrap_err();
+    assert!(err.is_connection(), "{err}");
+    let stores = fake.log().iter().filter(|l| l.contains("STORE")).count();
+    assert_eq!(stores, 1, "mutations are never retried");
+    c.uidvalidity("INBOX", None).await.unwrap();
+    let logins = fake.log().iter().filter(|l| l.starts_with("LOGIN")).count();
+    assert_eq!(logins, 2, "the stalled connection was dropped");
+}
+
+#[tokio::test]
+async fn stalled_read_is_retried_on_a_new_connection() {
+    let fake = FakeImap::start(FakeState::icloud_like()).await;
+    let c = quick(&fake);
+    c.uidvalidity("INBOX", None).await.unwrap();
+    fake.state.lock().unwrap().stall_on = Some("SELECT".into());
+    let uv = tokio::time::timeout(NO_HANG, c.uidvalidity("INBOX", None))
+        .await
+        .expect("read must time out and retry")
+        .unwrap();
+    assert_eq!(uv, 1000);
 }

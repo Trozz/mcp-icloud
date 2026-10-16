@@ -37,6 +37,8 @@ pub struct FakeState {
     /// Send a completion with a foreign tag (`A999 OK stale`) before the real reply the next time
     /// this command word arrives. One-shot.
     pub stale_tag_on: Option<String>,
+    /// Never answer the next time this command word arrives (the connection stays open). One-shot.
+    pub stall_on: Option<String>,
 }
 
 impl FakeState {
@@ -172,7 +174,10 @@ async fn handle(stream: TcpStream, state: Arc<Mutex<FakeState>>) {
             } else {
                 Vec::new()
             };
-            let (out, close) = if st.drop_on.as_deref() == Some(word.as_str()) {
+            let (out, close) = if st.stall_on.as_deref() == Some(word.as_str()) {
+                st.stall_on = None;
+                (Vec::new(), false)
+            } else if st.drop_on.as_deref() == Some(word.as_str()) {
                 st.drop_on = None;
                 (Vec::new(), true)
             } else if let Some(msg) = st.fail.remove(&word) {

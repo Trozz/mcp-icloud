@@ -22,12 +22,19 @@ pub enum Connector {
     },
 }
 
+/// Limit for TCP connect, TLS, greeting, login and the post-login setup.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Limit for each IMAP operation on an established connection.
+pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Clone)]
 pub struct ImapSettings {
     pub connector: Connector,
     pub username: String,
     pub password: SecretString,
     pub idle_timeout: Duration,
+    pub connect_timeout: Duration,
+    pub command_timeout: Duration,
 }
 
 impl ImapSettings {
@@ -40,6 +47,8 @@ impl ImapSettings {
             username,
             password,
             idle_timeout,
+            connect_timeout: CONNECT_TIMEOUT,
+            command_timeout: COMMAND_TIMEOUT,
         }
     }
 }
@@ -58,8 +67,9 @@ pub struct ImapClient {
 }
 
 /// Runs `$body` (an expression producing a future, with `$c: &mut Conn` in scope) on the shared
-/// connection: connects lazily, reconnects after idle timeout, drops the connection on connection
-/// errors and retries once when `$retry` is true (read-only operations only), and records metrics.
+/// connection: connects lazily, reconnects after idle timeout, bounds `$body` by the command
+/// timeout, drops the connection on connection errors (a timeout is one) and retries once when
+/// `$retry` is true (read-only operations only), and records metrics.
 macro_rules! with_conn {
     ($self:ident, $label:expr, $retry:expr, |$c:ident| $body:expr) => {{
         let started = std::time::Instant::now();
@@ -71,7 +81,11 @@ macro_rules! with_conn {
                 Ok(c) => c,
                 Err(e) => break Err(e),
             };
-            match $body.await {
+            let outcome = match tokio::time::timeout($self.settings.command_timeout, $body).await {
+                Ok(r) => r,
+                Err(_) => Err(MailError::Connection(format!("{} timed out", $label))),
+            };
+            match outcome {
                 Err(e) if e.is_connection() => {
                     *guard = None;
                     metrics::counter!("imap_reconnects_total").increment(1);
@@ -266,7 +280,12 @@ impl ImapClient {
             **guard = None;
         }
         if guard.is_none() {
-            **guard = Some(self.connect().await?);
+            let conn = tokio::time::timeout(self.settings.connect_timeout, self.connect())
+                .await
+                .map_err(|_| {
+                    MailError::Connection("timed out connecting to the mail server".into())
+                })??;
+            **guard = Some(conn);
         }
         Ok(guard.as_mut().expect("connected above"))
     }
