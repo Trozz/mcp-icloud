@@ -269,7 +269,7 @@ mod tests {
                 index: 0,
                 filename: Some("data.csv".into()),
                 mime_type: "text/csv".into(),
-                size: v.attachments[0].size
+                size: 8
             }]
         );
         assert_eq!(

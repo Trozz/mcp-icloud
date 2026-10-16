@@ -127,7 +127,7 @@ impl ImapClient {
         uidvalidity: Option<u32>,
     ) -> Result<()> {
         let set = check_uids(uids)?;
-        with_conn!(self, "DELETE", false, |c| async {
+        with_conn!(self, "DELETE_MESSAGES", false, |c| async {
             let trash = trash(c)?;
             if !permanent {
                 if mailbox == trash {
