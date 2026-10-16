@@ -1,6 +1,7 @@
 pub mod config;
 pub mod guards;
 pub mod jwt;
+pub mod oauth;
 pub mod pkce;
 
 pub fn install_crypto_provider() {
