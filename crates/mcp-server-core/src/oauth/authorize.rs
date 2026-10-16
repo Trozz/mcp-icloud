@@ -3,7 +3,7 @@ use crate::jwt::{Payload, TokenKind};
 use crate::pkce;
 use axum::extract::{ConnectInfo, Form, FromRequestParts, Query, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use secrecy::ExposeSecret;
 use serde::Deserialize;
@@ -126,6 +126,29 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
                 .map(|c| c.0.ip()),
         ))
     }
+}
+
+pub fn client_ip(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &[IpAddr]) -> IpAddr {
+    let peer_ip = peer.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+    if !trusted.contains(&peer_ip) {
+        return peer_ip;
+    }
+    let entries: Vec<&str> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .collect();
+    for entry in entries.into_iter().rev() {
+        let Ok(ip) = entry.parse::<IpAddr>() else {
+            return peer_ip;
+        };
+        if !trusted.contains(&ip) {
+            return ip;
+        }
+    }
+    peer_ip
 }
 
 #[derive(Deserialize)]
@@ -274,10 +297,11 @@ pub async fn get_authorize(
 
 pub async fn post_authorize(
     State(st): State<Arc<AuthState>>,
-    ClientIp(ip): ClientIp,
+    ClientIp(peer): ClientIp,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let ip = ip.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+    let ip = client_ip(peer, &headers, &st.settings.trusted_proxies);
     if st.limiter.is_blocked(ip) {
         metrics::counter!("oauth_requests_total", "endpoint" => "authorize", "outcome" => "rate_limited").increment(1);
         return error_page(
@@ -354,6 +378,7 @@ mod tests {
             signing_key: "0123456789abcdef0123456789abcdef".to_string().into(),
             admin_password: "pw".to_string().into(),
             static_token: None,
+            trusted_proxies: Vec::new(),
         })
     }
 
@@ -468,6 +493,41 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn xff(values: &[&str]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for v in values {
+            h.append("x-forwarded-for", HeaderValue::from_str(v).unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn client_ip_ignores_forwarded_for_from_untrusted_peer() {
+        let peer: IpAddr = "10.0.0.1".parse().unwrap();
+        assert_eq!(client_ip(Some(peer), &xff(&["198.51.100.1"]), &[]), peer);
+    }
+
+    #[test]
+    fn client_ip_takes_rightmost_untrusted_entry() {
+        let proxy: IpAddr = "10.0.0.1".parse().unwrap();
+        let inner: IpAddr = "10.0.0.2".parse().unwrap();
+        let headers = xff(&["1.1.1.1, 198.51.100.7", "10.0.0.2"]);
+        assert_eq!(
+            client_ip(Some(proxy), &headers, &[proxy, inner]),
+            "198.51.100.7".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_peer_on_garbage_or_missing_header() {
+        let proxy: IpAddr = "10.0.0.1".parse().unwrap();
+        assert_eq!(
+            client_ip(Some(proxy), &xff(&["not-an-ip"]), &[proxy]),
+            proxy
+        );
+        assert_eq!(client_ip(Some(proxy), &HeaderMap::new(), &[proxy]), proxy);
     }
 
     #[test]

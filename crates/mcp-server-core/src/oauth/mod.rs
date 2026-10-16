@@ -11,6 +11,7 @@ use crate::jwt::Jwt;
 use axum::Router;
 use axum::routing::{get, post};
 use secrecy::{ExposeSecret, SecretString};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +20,7 @@ pub struct OAuthSettings {
     pub signing_key: SecretString,
     pub admin_password: SecretString,
     pub static_token: Option<SecretString>,
+    pub trusted_proxies: Vec<IpAddr>,
 }
 
 pub struct AuthState {

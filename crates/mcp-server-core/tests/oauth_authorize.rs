@@ -198,3 +198,61 @@ async fn invalid_method_redirects_with_error() {
     assert!(loc.starts_with("https://app.example.com/cb?"));
     assert!(loc.contains("error=invalid_request"));
 }
+
+fn post_from(
+    fields: &[(String, String)],
+    peer: [u8; 4],
+    xff: &str,
+) -> axum::http::Request<axum::body::Body> {
+    let pairs: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    form_post_from("/authorize", &pairs, peer, Some(xff))
+}
+
+async fn fail_five_times_then_try(
+    st: std::sync::Arc<mcp_server_core::oauth::AuthState>,
+    first_xff: &str,
+    second_xff: &str,
+) -> StatusCode {
+    let app = app(st.clone());
+    let html = login_page(&app, &client_id(&st)).await;
+    for _ in 0..5 {
+        assert_eq!(
+            send(
+                &app,
+                post_from(&form_fields(&html, "nope"), [10, 0, 0, 1], first_xff)
+            )
+            .await
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    send(
+        &app,
+        post_from(&form_fields(&html, PASSWORD), [10, 0, 0, 1], second_xff),
+    )
+    .await
+    .status()
+}
+
+#[tokio::test]
+async fn forwarded_for_is_ignored_without_trusted_proxy() {
+    let status = fail_five_times_then_try(state(), "198.51.100.1", "198.51.100.2").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn forwarded_for_is_honoured_from_trusted_proxy() {
+    let st = state_with_trusted_proxies(vec!["10.0.0.1".parse().unwrap()]);
+    let status = fail_five_times_then_try(
+        st.clone(),
+        "203.0.113.9, 198.51.100.1",
+        "203.0.113.9, 198.51.100.2, 10.0.0.1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::FOUND);
+    let status = fail_five_times_then_try(st, "198.51.100.3", "198.51.100.3").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}

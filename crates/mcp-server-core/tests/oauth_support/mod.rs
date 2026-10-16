@@ -3,6 +3,7 @@ use axum::body::Body;
 use axum::http::{Request, Response};
 use http_body_util::BodyExt;
 use mcp_server_core::oauth::{AuthState, OAuthSettings, oauth_router};
+use std::net::IpAddr;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -14,11 +15,20 @@ pub fn state() -> Arc<AuthState> {
 }
 
 pub fn state_with_static(token: Option<&str>) -> Arc<AuthState> {
+    state_with(token, Vec::new())
+}
+
+pub fn state_with_trusted_proxies(trusted_proxies: Vec<IpAddr>) -> Arc<AuthState> {
+    state_with(None, trusted_proxies)
+}
+
+fn state_with(token: Option<&str>, trusted_proxies: Vec<IpAddr>) -> Arc<AuthState> {
     AuthState::new(OAuthSettings {
         public_url: PUBLIC_URL.into(),
         signing_key: "0123456789abcdef0123456789abcdef".to_string().into(),
         admin_password: PASSWORD.to_string().into(),
         static_token: token.map(|t| t.to_string().into()),
+        trusted_proxies,
     })
 }
 
@@ -50,17 +60,27 @@ pub fn json_post(uri: &str, body: serde_json::Value) -> Request<Body> {
 }
 
 pub fn form_post(uri: &str, pairs: &[(&str, &str)]) -> Request<Body> {
+    form_post_from(uri, pairs, [10, 0, 0, 1], None)
+}
+
+pub fn form_post_from(
+    uri: &str,
+    pairs: &[(&str, &str)],
+    peer: [u8; 4],
+    forwarded_for: Option<&str>,
+) -> Request<Body> {
     let body = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(pairs)
         .finish();
-    Request::post(uri)
+    let mut b = Request::post(uri)
         .header("content-type", "application/x-www-form-urlencoded")
         .extension(axum::extract::ConnectInfo(std::net::SocketAddr::from((
-            [10, 0, 0, 1],
-            5555,
-        ))))
-        .body(Body::from(body))
-        .unwrap()
+            peer, 5555,
+        ))));
+    if let Some(xff) = forwarded_for {
+        b = b.header("x-forwarded-for", xff);
+    }
+    b.body(Body::from(body)).unwrap()
 }
 
 pub fn get(uri: &str) -> Request<Body> {

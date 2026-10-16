@@ -2,7 +2,7 @@ use crate::oauth::OAuthSettings;
 use crate::observability::{LogFormat, ObservabilityConfig};
 use crate::tls::TlsMode;
 use secrecy::SecretString;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -128,6 +128,9 @@ fn parse_public_url(raw: &str) -> Result<(String, String), String> {
     if url.query().is_some() || url.fragment().is_some() {
         return Err("PUBLIC_URL must not contain a query or fragment".into());
     }
+    if url.path() != "/" {
+        return Err("PUBLIC_URL must not contain a path".into());
+    }
     let host = host
         .trim_start_matches('[')
         .trim_end_matches(']')
@@ -161,7 +164,23 @@ impl CoreConfig {
             }
         }
         let admin_password = env.secret_required("OAUTH_ADMIN_PASSWORD");
+        if let Some(p) = &admin_password {
+            use secrecy::ExposeSecret;
+            if p.expose_secret().chars().count() < 12 {
+                env.errors
+                    .push("OAUTH_ADMIN_PASSWORD must be at least 12 characters".into());
+            }
+        }
         let static_token = env.secret_optional("MCP_AUTH_TOKEN");
+        let mut trusted_proxies = Vec::new();
+        for raw in env.list("TRUSTED_PROXIES") {
+            match raw.parse::<IpAddr>() {
+                Ok(ip) => trusted_proxies.push(ip),
+                Err(_) => env.errors.push(format!(
+                    "TRUSTED_PROXIES contains an invalid IP address: {raw}"
+                )),
+            }
+        }
         let allowed_origins = env.list("ALLOWED_ORIGINS");
         let bind_addr = env.parse("BIND_ADDR", SocketAddr::from(([0, 0, 0, 0], 8443)));
         let insecure = env.bool("INSECURE_HTTP", false);
@@ -191,6 +210,7 @@ impl CoreConfig {
                 signing_key: signing_key?,
                 admin_password: admin_password?,
                 static_token,
+                trusted_proxies,
             },
             public_url,
             public_host,
@@ -376,6 +396,51 @@ mod tests {
         assert_eq!(c.unwrap().public_url, "http://localhost:8443");
         let (_, errors) = core(core_env(&[("PUBLIC_URL", "http://mail.example.com")]));
         assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn short_admin_password_is_rejected_without_echoing_it() {
+        let (c, errors) = core(core_env(&[("OAUTH_ADMIN_PASSWORD", "elevenchars")]));
+        assert!(c.is_none());
+        let joined = errors.join("\n");
+        assert!(
+            joined.contains("OAUTH_ADMIN_PASSWORD must be at least 12 characters"),
+            "{joined}"
+        );
+        assert!(!joined.contains("elevenchars"), "secret leaked: {joined}");
+        let (c, errors) = core(core_env(&[("OAUTH_ADMIN_PASSWORD", "twelve chars")]));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(c.is_some());
+    }
+
+    #[test]
+    fn trusted_proxies_default_empty_and_parse() {
+        let (c, _) = core(core_env(&[]));
+        assert!(c.unwrap().oauth.trusted_proxies.is_empty());
+        let (c, errors) = core(core_env(&[("TRUSTED_PROXIES", "10.0.0.1, ::1")]));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            c.unwrap().oauth.trusted_proxies,
+            vec![
+                "10.0.0.1".parse::<std::net::IpAddr>().unwrap(),
+                "::1".parse().unwrap()
+            ]
+        );
+        let (c, errors) = core(core_env(&[("TRUSTED_PROXIES", "10.0.0.1,nope")]));
+        assert!(c.is_none());
+        assert!(errors.join("\n").contains("TRUSTED_PROXIES"), "{errors:?}");
+    }
+
+    #[test]
+    fn public_url_with_path_is_rejected() {
+        let (c, errors) = core(core_env(&[("PUBLIC_URL", "https://mail.example.com/sub")]));
+        assert!(c.is_none());
+        assert!(
+            errors
+                .join("\n")
+                .contains("PUBLIC_URL must not contain a path"),
+            "{errors:?}"
+        );
     }
 
     #[test]
