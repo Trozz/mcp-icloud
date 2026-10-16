@@ -1,7 +1,16 @@
 use super::AuthState;
-use crate::jwt::TokenKind;
+use crate::jwt::{Payload, TokenKind};
 use crate::pkce;
+use axum::extract::{ConnectInfo, Form, FromRequestParts, Query, State};
+use axum::http::request::Parts;
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{Html, IntoResponse, Redirect, Response};
+use secrecy::ExposeSecret;
 use serde::Deserialize;
+use std::convert::Infallible;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AuthorizeParams {
@@ -103,6 +112,236 @@ pub fn binding(v: &ValidRequest) -> String {
         v.scope,
         v.resource
     ))
+}
+
+pub struct ClientIp(pub Option<IpAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
+    type Rejection = Infallible;
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(ClientIp(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|c| c.0.ip()),
+        ))
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LoginForm {
+    #[serde(flatten)]
+    pub params: AuthorizeParams,
+    pub csrf: String,
+    pub password: String,
+}
+
+fn escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn with_page_headers(status: StatusCode, html: String) -> Response {
+    let mut res = (status, Html(html)).into_response();
+    let h = res.headers_mut();
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+        ),
+    );
+    h.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    res
+}
+
+fn error_page(status: StatusCode, message: &str) -> Response {
+    with_page_headers(
+        status,
+        format!(
+            "<!doctype html><meta charset=\"utf-8\"><title>Authorization error</title><p>{}</p>",
+            escape(message)
+        ),
+    )
+}
+
+fn login_page(
+    st: &AuthState,
+    v: &ValidRequest,
+    status: StatusCode,
+    error: Option<&str>,
+) -> Response {
+    let csrf = st
+        .jwt
+        .issue(
+            TokenKind::Csrf,
+            Some(Duration::from_secs(600)),
+            Payload {
+                binding: Some(binding(v)),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
+    let hidden = [
+        ("response_type", "code"),
+        ("client_id", v.client_id.as_str()),
+        ("redirect_uri", v.redirect_uri.as_str()),
+        ("code_challenge", v.code_challenge.as_str()),
+        ("code_challenge_method", "S256"),
+        ("state", v.state.as_deref().unwrap_or("")),
+        ("scope", v.scope.as_str()),
+        ("resource", v.resource.as_str()),
+        ("csrf", csrf.as_str()),
+    ]
+    .iter()
+    .map(|(n, val)| {
+        format!(
+            "<input type=\"hidden\" name=\"{n}\" value=\"{}\">",
+            escape(val)
+        )
+    })
+    .collect::<String>();
+    let error_html = error
+        .map(|e| format!("<p style=\"color:#b00\">{}</p>", escape(e)))
+        .unwrap_or_default();
+    let html = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">\
+<title>Authorize</title><style>body{{font-family:system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem}}input[type=password]{{width:100%;padding:.5rem}}button{{margin-top:1rem;padding:.5rem 1rem}}</style></head>\
+<body><h1>Authorize access</h1><p>An MCP client is requesting access to this mail server.</p>{error_html}\
+<form method=\"post\" action=\"/authorize\">{hidden}<label>Password<input type=\"password\" name=\"password\" autofocus required></label>\
+<button type=\"submit\">Authorize</button></form></body></html>"
+    );
+    with_page_headers(status, html)
+}
+
+fn redirect_error(
+    redirect_uri: &str,
+    state: Option<&str>,
+    error: &str,
+    description: &str,
+) -> Response {
+    let Ok(mut url) = url::Url::parse(redirect_uri) else {
+        return error_page(StatusCode::BAD_REQUEST, "invalid redirect_uri");
+    };
+    {
+        let mut q = url.query_pairs_mut();
+        q.append_pair("error", error)
+            .append_pair("error_description", description);
+        if let Some(s) = state {
+            q.append_pair("state", s);
+        }
+    }
+    Redirect::to(url.as_str()).into_response().with_found()
+}
+
+trait Found {
+    fn with_found(self) -> Response;
+}
+
+impl Found for Response {
+    fn with_found(mut self) -> Response {
+        *self.status_mut() = StatusCode::FOUND;
+        self
+    }
+}
+
+fn rejection_response(r: Rejection) -> Response {
+    match r {
+        Rejection::BadClient(msg) => error_page(StatusCode::BAD_REQUEST, msg),
+        Rejection::Redirect {
+            redirect_uri,
+            state,
+            error,
+            description,
+        } => redirect_error(&redirect_uri, state.as_deref(), error, description),
+    }
+}
+
+pub async fn get_authorize(
+    State(st): State<Arc<AuthState>>,
+    Query(p): Query<AuthorizeParams>,
+) -> Response {
+    match validate(&st, &p) {
+        Ok(v) => login_page(&st, &v, StatusCode::OK, None),
+        Err(r) => rejection_response(r),
+    }
+}
+
+pub async fn post_authorize(
+    State(st): State<Arc<AuthState>>,
+    ClientIp(ip): ClientIp,
+    Form(form): Form<LoginForm>,
+) -> Response {
+    let ip = ip.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+    if st.limiter.is_blocked(ip) {
+        metrics::counter!("oauth_requests_total", "endpoint" => "authorize", "outcome" => "rate_limited").increment(1);
+        return error_page(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many failed attempts. Wait a minute and try again.",
+        );
+    }
+    let v = match validate(&st, &form.params) {
+        Ok(v) => v,
+        Err(r) => return rejection_response(r),
+    };
+    let csrf_ok = st
+        .jwt
+        .verify(&form.csrf, TokenKind::Csrf)
+        .ok()
+        .and_then(|c| c.payload.binding)
+        .is_some_and(|b| pkce::ct_eq(&b, &binding(&v)));
+    if !csrf_ok {
+        return error_page(
+            StatusCode::BAD_REQUEST,
+            "The login form expired or was modified. Start the connection again.",
+        );
+    }
+    if !pkce::ct_eq(&form.password, st.settings.admin_password.expose_secret()) {
+        st.limiter.record_failure(ip);
+        metrics::counter!("oauth_login_failures_total").increment(1);
+        tracing::warn!(%ip, "oauth login failed");
+        return login_page(
+            &st,
+            &v,
+            StatusCode::UNAUTHORIZED,
+            Some("Incorrect password"),
+        );
+    }
+    let payload = Payload {
+        client_id: Some(v.client_id.clone()),
+        redirect_uri: Some(v.redirect_uri.clone()),
+        code_challenge: Some(v.code_challenge.clone()),
+        scope: Some(v.scope.clone()),
+        resource: Some(v.resource.clone()),
+        ..Default::default()
+    };
+    let Ok(code) = st
+        .jwt
+        .issue(TokenKind::Code, Some(Duration::from_secs(60)), payload)
+    else {
+        return error_page(StatusCode::INTERNAL_SERVER_ERROR, "token error");
+    };
+    let Ok(mut url) = url::Url::parse(&v.redirect_uri) else {
+        return error_page(StatusCode::BAD_REQUEST, "invalid redirect_uri");
+    };
+    {
+        let mut q = url.query_pairs_mut();
+        q.append_pair("code", &code);
+        if let Some(s) = &v.state {
+            q.append_pair("state", s);
+        }
+    }
+    metrics::counter!("oauth_requests_total", "endpoint" => "authorize", "outcome" => "ok")
+        .increment(1);
+    tracing::info!("oauth authorization granted");
+    Redirect::to(url.as_str()).into_response().with_found()
 }
 
 #[cfg(test)]

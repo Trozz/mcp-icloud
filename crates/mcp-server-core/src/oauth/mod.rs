@@ -67,5 +67,9 @@ pub fn oauth_router(state: Arc<AuthState>) -> Router {
             get(metadata::authorization_server),
         )
         .route("/register", post(register::register))
+        .route(
+            "/authorize",
+            get(authorize::get_authorize).post(authorize::post_authorize),
+        )
         .with_state(state)
 }
