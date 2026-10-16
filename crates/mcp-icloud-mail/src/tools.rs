@@ -2,6 +2,7 @@ use crate::error::{self, MailError};
 use crate::imap::proto::quote;
 use crate::imap::{ImapClient, MessageSummary, Role, SearchQuery};
 use crate::mail::build::{self, BuiltMessage, DraftInput, Identity};
+use crate::mail::envelope::{envelope_recipients, strip_header};
 use crate::mail::parse::{self, BodyFormat};
 use crate::smtp::Sender;
 use base64::Engine as _;
@@ -39,6 +40,7 @@ pub struct ToolSettings {
 #[derive(Clone)]
 pub struct MailServer {
     imap: Arc<ImapClient>,
+    sender: Option<Arc<dyn Sender>>,
     settings: Arc<ToolSettings>,
     tool_router: ToolRouter<MailServer>,
 }
@@ -216,6 +218,15 @@ pub struct ForwardParams {
     pub include_attachments: bool,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct SendDraftParams {
+    /// uid of the draft in the Drafts mailbox.
+    pub uid: u32,
+    /// uidvalidity of the Drafts mailbox from create_draft or search_messages. Recommended.
+    pub uidvalidity: Option<u32>,
+}
+
 #[derive(Serialize)]
 struct ThreadEntry {
     mailbox: String,
@@ -282,13 +293,18 @@ fn thread_criteria(ids: &[String]) -> error::Result<Option<String>> {
 impl MailServer {
     pub fn new(
         imap: Arc<ImapClient>,
-        _sender: Option<Arc<dyn Sender>>,
+        sender: Option<Arc<dyn Sender>>,
         settings: Arc<ToolSettings>,
     ) -> Self {
+        let mut tool_router = Self::read_router() + Self::write_router();
+        if sender.is_some() {
+            tool_router += Self::send_router();
+        }
         Self {
             imap,
+            sender,
             settings,
-            tool_router: Self::read_router() + Self::write_router(),
+            tool_router,
         }
     }
 
@@ -313,6 +329,55 @@ impl MailServer {
             "uid": uid,
             "message_id": built.message_id,
             "note": "Saved as a draft. Review it in Mail before sending.",
+        })))
+    }
+
+    /// SMTP send, then save to Sent, then remove the draft. Once SMTP has accepted the message,
+    /// any later failure keeps the draft and says plainly that the message WAS sent.
+    async fn send(&self, sender: &dyn Sender, p: SendDraftParams) -> error::Result<CallToolResult> {
+        let drafts = self.imap.role_mailbox(Role::Drafts).await?;
+        let (uidvalidity, raw) = self.imap.fetch_raw(&drafts, p.uid, p.uidvalidity).await?;
+        let recipients = envelope_recipients(&raw)?;
+        let message_id = parse::view(&raw, BodyFormat::Text, 0)?
+            .message_id
+            .unwrap_or_default();
+        let outgoing = strip_header(&raw, "Bcc");
+        sender
+            .send(&self.settings.identity.email, &recipients, &outgoing)
+            .await?;
+        tracing::info!(recipients = recipients.len(), "draft sent");
+
+        let sent_note = |what: &str, e: &MailError| {
+            MailError::SentButIncomplete(format!(
+                "The message WAS sent to {} recipient(s), but {what} failed: {e}. The draft was kept in {drafts} (uid {}); delete it yourself so it is not sent twice.",
+                recipients.len(),
+                p.uid
+            ))
+        };
+        let sent_mailbox = match self.imap.role_mailbox(Role::Sent).await {
+            Ok(m) => m,
+            Err(e) => return Err(sent_note("finding the Sent mailbox", &e)),
+        };
+        // The Sent copy keeps the Bcc header: it is only visible to the account owner.
+        if let Err(e) = self
+            .imap
+            .append(&sent_mailbox, "\\Seen", &raw, &message_id)
+            .await
+        {
+            return Err(sent_note("saving a copy to Sent", &e));
+        }
+        if let Err(e) = self
+            .imap
+            .delete_messages(&drafts, &[p.uid], false, Some(uidvalidity))
+            .await
+        {
+            return Err(sent_note("removing the draft", &e));
+        }
+        Ok(json_result(&json!({
+            "sent": true,
+            "recipients": recipients.len(),
+            "saved_to": sent_mailbox,
+            "draft_removed": true,
         })))
     }
 
@@ -691,6 +756,34 @@ impl MailServer {
                 p.include_attachments,
             )?;
             self.save_draft(built).await
+        })
+        .await
+    }
+}
+
+#[tool_router(router = send_router)]
+impl MailServer {
+    #[tool(
+        description = "Send a draft from the Drafts mailbox via iCloud SMTP, save a copy to Sent and remove the draft. This really sends email.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
+    )]
+    pub async fn send_draft(
+        &self,
+        Parameters(p): Parameters<SendDraftParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "send_draft");
+        run("send_draft", async {
+            let Some(sender) = &self.sender else {
+                return Err(MailError::Unsupported(
+                    "sending is disabled on this server".into(),
+                ));
+            };
+            self.send(sender.as_ref(), p).await
         })
         .await
     }
