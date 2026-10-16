@@ -151,9 +151,7 @@ fn with_page_headers(status: StatusCode, html: String) -> Response {
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     h.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
-        ),
+        HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'"),
     );
     h.insert(
         header::REFERRER_POLICY,

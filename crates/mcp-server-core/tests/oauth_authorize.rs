@@ -80,6 +80,12 @@ async fn login_page(app: &axum::Router, cid: &str) -> String {
             .unwrap()
             .contains("default-src 'none'")
     );
+    assert!(
+        !res.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("form-action")
+    );
     body_text(res).await
 }
 
