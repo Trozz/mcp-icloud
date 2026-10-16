@@ -5,3 +5,4 @@
     clippy::manual_split_once
 )]
 pub mod fake_imap;
+pub mod tools;

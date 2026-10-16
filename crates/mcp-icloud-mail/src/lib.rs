@@ -4,6 +4,7 @@ pub mod error;
 pub mod imap;
 pub mod mail;
 pub mod smtp;
+pub mod tools;
 
 pub const VERSION: &str = match option_env!("APP_VERSION") {
     Some(v) => v,

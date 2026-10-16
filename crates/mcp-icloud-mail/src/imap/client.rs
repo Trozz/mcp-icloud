@@ -272,14 +272,16 @@ impl ImapClient {
     }
 
     pub async fn capabilities(&self) -> Result<Caps> {
-        with_conn!(self, "CAPABILITY", true, |c| async {
+        with_conn!(self, "CAPABILITY", true, |c| async move {
             Ok::<_, MailError>(c.caps)
         })
     }
 
     /// Name of the mailbox with the given special-use role.
     pub async fn role_mailbox(&self, role: Role) -> Result<String> {
-        with_conn!(self, "LIST", true, |c| async {
+        // `async move`: a block that only reads `c` would capture `&&mut Conn`, which needs
+        // `Conn: Sync` and makes every caller's future non-Send.
+        with_conn!(self, "LIST", true, |c| async move {
             c.role(role)
                 .map(str::to_string)
                 .ok_or_else(|| MailError::MailboxNotFound(format!("{role:?} mailbox")))
