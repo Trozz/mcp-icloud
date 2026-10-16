@@ -1,6 +1,9 @@
 mod client;
 pub mod proto;
+pub mod query;
+mod read;
 pub mod types;
 
 pub use client::{Connector, ImapClient, ImapSettings};
-pub use types::{Caps, ListedMailbox, MailboxInfo, Role};
+pub use query::SearchQuery;
+pub use types::{Caps, ListedMailbox, MailboxInfo, MessageSummary, Role, SearchPage};

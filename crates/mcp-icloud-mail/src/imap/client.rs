@@ -53,9 +53,8 @@ pub(crate) struct Conn {
 
 pub struct ImapClient {
     pub(crate) settings: ImapSettings,
-    #[allow(dead_code)] // read by fetch_raw in Task 8
     pub(crate) cache: Arc<dyn MessageCache>,
-    inner: Mutex<Option<Conn>>,
+    pub(crate) inner: Mutex<Option<Conn>>,
 }
 
 /// Runs `$body` (an expression producing a future, with `$c: &mut Conn` in scope) on the shared
@@ -97,7 +96,6 @@ macro_rules! with_conn {
         result
     }};
 }
-#[allow(unused_imports)]
 pub(crate) use with_conn;
 
 impl Conn {
@@ -256,7 +254,7 @@ impl ImapClient {
         })
     }
 
-    async fn ensure<'g>(
+    pub(crate) async fn ensure<'g>(
         &self,
         guard: &'g mut MutexGuard<'_, Option<Conn>>,
     ) -> Result<&'g mut Conn> {
