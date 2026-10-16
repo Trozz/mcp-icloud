@@ -29,6 +29,8 @@ pub enum MailError {
     /// SMTP accepted the message but a follow-up step (saving to Sent, removing the draft) failed.
     #[error("{0}")]
     SentButIncomplete(String),
+    #[error("{0}")]
+    Internal(String),
 }
 
 impl MailError {

@@ -87,10 +87,13 @@ impl Sender for SmtpSender {
 }
 
 /// Test double: records every message instead of sending it. `fail_with` makes the next send fail.
+/// After recording, it signals `recorded` and then waits `delay_after_send`.
 #[derive(Default)]
 pub struct RecordingSender {
     pub sent: Mutex<Vec<SentMail>>,
     pub fail_with: Mutex<Option<String>>,
+    pub recorded: tokio::sync::Notify,
+    pub delay_after_send: Mutex<std::time::Duration>,
 }
 
 impl Sender for RecordingSender {
@@ -110,6 +113,9 @@ impl Sender for RecordingSender {
                 recipients: recipients.to_vec(),
                 raw: raw.to_vec(),
             });
+            self.recorded.notify_one();
+            let delay = *self.delay_after_send.lock().expect("sender lock");
+            tokio::time::sleep(delay).await;
             Ok(())
         })
     }

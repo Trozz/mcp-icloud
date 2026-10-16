@@ -270,3 +270,30 @@ async fn bcc_with_space_before_the_colon_never_reaches_smtp() {
     );
     assert!(!String::from_utf8_lossy(&sent[0].raw).contains("hidden@example.com"));
 }
+
+#[tokio::test]
+async fn cancelling_the_call_after_smtp_still_removes_the_draft() {
+    let s = setup().await;
+    *s.sender.delay_after_send.lock().unwrap() = std::time::Duration::from_millis(300);
+    let server = s.server.clone();
+    let uid = s.draft_uid;
+    let call = tokio::spawn(async move { server.send_draft(params(json!({"uid": uid}))).await });
+    s.sender.recorded.notified().await;
+    call.abort();
+    let _ = call.await;
+
+    for _ in 0..100 {
+        if s.fake.messages("Drafts").is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(s.fake.messages("Drafts").is_empty());
+    let r = s
+        .server
+        .send_draft(params(json!({"uid": s.draft_uid})))
+        .await
+        .unwrap();
+    assert!(is_error(&r));
+    assert_eq!(s.sender.sent.lock().unwrap().len(), 1);
+}

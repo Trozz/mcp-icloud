@@ -799,12 +799,16 @@ impl MailServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!(args = ?p, "send_draft");
         run("send_draft", async {
-            let Some(sender) = &self.sender else {
+            let Some(sender) = self.sender.clone() else {
                 return Err(MailError::Unsupported(
                     "sending is disabled on this server".into(),
                 ));
             };
-            self.send(sender.as_ref(), p).await
+            // Detached so a cancelled request cannot stop the tail after SMTP accepted the message.
+            let server = self.clone();
+            tokio::spawn(async move { server.send(sender.as_ref(), p).await })
+                .await
+                .map_err(|e| MailError::Internal(format!("send task failed: {e}")))?
         })
         .await
     }
