@@ -2,6 +2,7 @@ pub mod config;
 pub mod guards;
 pub mod jwt;
 pub mod oauth;
+pub mod observability;
 pub mod pkce;
 pub mod server;
 pub mod tls;

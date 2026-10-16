@@ -1,4 +1,9 @@
+use crate::oauth::OAuthSettings;
+use crate::observability::{LogFormat, ObservabilityConfig};
+use crate::tls::TlsMode;
 use secrecy::SecretString;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 pub struct EnvReader<F: Fn(&str) -> Option<String>> {
@@ -14,7 +19,10 @@ impl EnvReader<fn(&str) -> Option<String>> {
 
 impl<F: Fn(&str) -> Option<String>> EnvReader<F> {
     pub fn new(get: F) -> Self {
-        Self { get, errors: Vec::new() }
+        Self {
+            get,
+            errors: Vec::new(),
+        }
     }
 
     fn raw(&self, name: &str) -> Option<String> {
@@ -30,7 +38,8 @@ impl<F: Fn(&str) -> Option<String>> EnvReader<F> {
         match std::fs::read_to_string(&path) {
             Ok(s) => Some(s.trim_end_matches(['\r', '\n']).to_string()).filter(|v| !v.is_empty()),
             Err(e) => {
-                self.errors.push(format!("{file_var}: cannot read {path}: {e}"));
+                self.errors
+                    .push(format!("{file_var}: cannot read {path}: {e}"));
                 None
             }
         }
@@ -54,12 +63,15 @@ impl<F: Fn(&str) -> Option<String>> EnvReader<F> {
     }
 
     pub fn bool(&mut self, name: &str, default: bool) -> bool {
-        let Some(v) = self.optional(name) else { return default };
+        let Some(v) = self.optional(name) else {
+            return default;
+        };
         match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => true,
             "0" | "false" | "no" | "off" => false,
             _ => {
-                self.errors.push(format!("{name} must be true or false, got \"{v}\""));
+                self.errors
+                    .push(format!("{name} must be true or false, got \"{v}\""));
                 default
             }
         }
@@ -82,8 +94,124 @@ impl<F: Fn(&str) -> Option<String>> EnvReader<F> {
 
     pub fn list(&mut self, name: &str) -> Vec<String> {
         self.optional(name)
-            .map(|v| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect())
+            .map(|v| {
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default()
+    }
+}
+
+pub struct CoreConfig {
+    pub public_url: String,
+    pub public_host: String,
+    pub oauth: OAuthSettings,
+    pub allowed_origins: Vec<String>,
+    pub bind_addr: SocketAddr,
+    pub tls: TlsMode,
+    pub observability: ObservabilityConfig,
+}
+
+fn parse_public_url(raw: &str) -> Result<(String, String), String> {
+    let url = url::Url::parse(raw).map_err(|_| "PUBLIC_URL must be an https URL".to_string())?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| "PUBLIC_URL must be an https URL".to_string())?
+        .to_string();
+    let loopback = matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]");
+    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
+        return Err("PUBLIC_URL must be an https URL (http is only allowed for localhost)".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("PUBLIC_URL must not contain a query or fragment".into());
+    }
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    Ok((url.as_str().trim_end_matches('/').to_string(), host))
+}
+
+impl CoreConfig {
+    pub fn from_env<F: Fn(&str) -> Option<String>>(
+        env: &mut EnvReader<F>,
+        service_name: &'static str,
+        crate_target: &'static str,
+    ) -> Option<Self> {
+        let errors_before = env.errors.len();
+
+        let public = env
+            .required("PUBLIC_URL")
+            .and_then(|raw| match parse_public_url(&raw) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    env.errors.push(e);
+                    None
+                }
+            });
+        let signing_key = env.secret_required("OAUTH_SIGNING_KEY");
+        if let Some(k) = &signing_key {
+            use secrecy::ExposeSecret;
+            if k.expose_secret().len() < 32 {
+                env.errors
+                    .push("OAUTH_SIGNING_KEY must be at least 32 bytes".into());
+            }
+        }
+        let admin_password = env.secret_required("OAUTH_ADMIN_PASSWORD");
+        let static_token = env.secret_optional("MCP_AUTH_TOKEN");
+        let allowed_origins = env.list("ALLOWED_ORIGINS");
+        let bind_addr = env.parse("BIND_ADDR", SocketAddr::from(([0, 0, 0, 0], 8443)));
+        let insecure = env.bool("INSECURE_HTTP", false);
+        let cert = env.optional("TLS_CERT_PATH").map(PathBuf::from);
+        let key = env.optional("TLS_KEY_PATH").map(PathBuf::from);
+        let log_level = env.optional("LOG_LEVEL").unwrap_or_else(|| "info".into());
+        let log_format = env.parse("LOG_FORMAT", LogFormat::Json);
+        let debug = env.bool("DEBUG", false);
+        let unsafe_content = env.bool("DEBUG_UNSAFE_LOG_CONTENT", false);
+        let metrics_addr = env.parse_optional::<SocketAddr>("METRICS_ADDR");
+        let otlp_enabled = env.optional("OTEL_EXPORTER_OTLP_ENDPOINT").is_some();
+
+        let (public_url, public_host) = public.unwrap_or_default();
+        let tls = match TlsMode::select(insecure, cert, key, &public_host) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                env.errors.push(e);
+                None
+            }
+        };
+        if env.errors.len() != errors_before {
+            return None;
+        }
+        Some(CoreConfig {
+            oauth: OAuthSettings {
+                public_url: public_url.clone(),
+                signing_key: signing_key?,
+                admin_password: admin_password?,
+                static_token,
+            },
+            public_url,
+            public_host,
+            allowed_origins,
+            bind_addr,
+            tls: tls?,
+            observability: ObservabilityConfig {
+                service_name,
+                crate_target,
+                log_level,
+                log_format,
+                debug,
+                unsafe_content,
+                otlp_enabled,
+                metrics_addr,
+            },
+        })
+    }
+
+    pub fn mcp_url(&self) -> String {
+        format!("{}/mcp", self.public_url)
     }
 }
 
@@ -94,7 +222,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn reader(pairs: &[(&str, &str)]) -> EnvReader<impl Fn(&str) -> Option<String> + use<>> {
-        let map: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         EnvReader::new(move |k: &str| map.get(k).cloned())
     }
 
@@ -118,7 +249,10 @@ mod tests {
         std::fs::write(&path, "s3cret\n").unwrap();
         let p = path.to_str().unwrap().to_string();
         let mut env = reader(&[("PASS_FILE", p.as_str())]);
-        assert_eq!(env.secret_required("PASS").unwrap().expose_secret(), "s3cret");
+        assert_eq!(
+            env.secret_required("PASS").unwrap().expose_secret(),
+            "s3cret"
+        );
         assert!(env.errors.is_empty());
     }
 
@@ -144,7 +278,10 @@ mod tests {
         assert!(env.bool("C", false));
         assert!(env.bool("MISSING", true));
         assert!(!env.bool("D", false));
-        assert_eq!(env.errors, vec!["D must be true or false, got \"maybe\"".to_string()]);
+        assert_eq!(
+            env.errors,
+            vec!["D must be true or false, got \"maybe\"".to_string()]
+        );
     }
 
     #[test]
@@ -160,5 +297,93 @@ mod tests {
     fn list_splits_and_trims() {
         let mut env = reader(&[("L", " a, b ,,c ")]);
         assert_eq!(env.list("L"), vec!["a", "b", "c"]);
+    }
+
+    fn core_env(extra: &[(&str, &str)]) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = [
+            ("PUBLIC_URL", "https://mail.example.com/"),
+            ("OAUTH_SIGNING_KEY", "0123456789abcdef0123456789abcdef"),
+            ("OAUTH_ADMIN_PASSWORD", "a long password"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        v.extend(extra.iter().map(|(a, b)| (a.to_string(), b.to_string())));
+        v
+    }
+
+    fn core(pairs: Vec<(String, String)>) -> (Option<CoreConfig>, Vec<String>) {
+        let map: HashMap<String, String> = pairs.into_iter().collect();
+        let mut env = EnvReader::new(move |k: &str| map.get(k).cloned());
+        let c = CoreConfig::from_env(&mut env, "mcp-icloud-mail", "mcp_icloud_mail");
+        (c, env.errors)
+    }
+
+    #[test]
+    fn core_config_defaults() {
+        let (c, errors) = core(core_env(&[]));
+        assert!(errors.is_empty(), "{errors:?}");
+        let c = c.unwrap();
+        assert_eq!(c.public_url, "https://mail.example.com");
+        assert_eq!(c.public_host, "mail.example.com");
+        assert_eq!(c.mcp_url(), "https://mail.example.com/mcp");
+        assert_eq!(c.bind_addr.to_string(), "0.0.0.0:8443");
+        assert!(matches!(c.tls, crate::tls::TlsMode::SelfSigned { .. }));
+        assert!(matches!(
+            c.observability.log_format,
+            crate::observability::LogFormat::Json
+        ));
+        assert!(!c.observability.otlp_enabled);
+    }
+
+    #[test]
+    fn core_config_collects_all_errors() {
+        let (c, errors) = core(vec![
+            ("PUBLIC_URL".into(), "ftp://x".into()),
+            ("OAUTH_SIGNING_KEY".into(), "short".into()),
+            ("TLS_CERT_PATH".into(), "/c".into()),
+            ("LOG_FORMAT".into(), "xml".into()),
+        ]);
+        assert!(c.is_none());
+        let joined = errors.join("\n");
+        assert!(
+            joined.contains("PUBLIC_URL must be an https URL"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("OAUTH_SIGNING_KEY must be at least 32 bytes"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("OAUTH_ADMIN_PASSWORD is required"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("TLS_CERT_PATH and TLS_KEY_PATH must be set together"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("LOG_FORMAT has an invalid value"),
+            "{joined}"
+        );
+        assert!(!joined.contains("short"), "secret value leaked: {joined}");
+    }
+
+    #[test]
+    fn http_public_url_allowed_only_for_localhost() {
+        let (c, errors) = core(core_env(&[("PUBLIC_URL", "http://localhost:8443")]));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(c.unwrap().public_url, "http://localhost:8443");
+        let (_, errors) = core(core_env(&[("PUBLIC_URL", "http://mail.example.com")]));
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn otlp_enabled_when_endpoint_set() {
+        let (c, _) = core(core_env(&[(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "http://collector:4318",
+        )]));
+        assert!(c.unwrap().observability.otlp_enabled);
     }
 }
