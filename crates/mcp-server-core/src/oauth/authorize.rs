@@ -65,9 +65,10 @@ pub fn validate(st: &AuthState, p: &AuthorizeParams) -> Result<ValidRequest, Rej
             "redirect_uri is not registered for this client",
         ));
     }
+    let state = p.state.clone().filter(|s| !s.is_empty());
     let redirect = |error, description| Rejection::Redirect {
         redirect_uri: redirect_uri.to_string(),
-        state: p.state.clone(),
+        state: state.clone(),
         error,
         description,
     };
@@ -97,8 +98,8 @@ pub fn validate(st: &AuthState, p: &AuthorizeParams) -> Result<ValidRequest, Rej
         client_id: client_id.to_string(),
         redirect_uri: redirect_uri.to_string(),
         code_challenge,
-        state: p.state.clone(),
-        scope: p.scope.clone().unwrap_or_else(|| "mail".into()),
+        state,
+        scope: "mail".into(),
         resource,
         client_name: client.payload.client_name,
     })
@@ -176,7 +177,9 @@ fn with_page_headers(status: StatusCode, html: String) -> Response {
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     h.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'"),
+        HeaderValue::from_static(
+            "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+        ),
     );
     h.insert(
         header::REFERRER_POLICY,
@@ -380,7 +383,10 @@ pub async fn post_authorize(
     metrics::counter!("oauth_requests_total", "endpoint" => "authorize", "outcome" => "ok")
         .increment(1);
     tracing::info!("oauth authorization granted");
-    Redirect::to(url.as_str()).into_response().with_found()
+    let mut res = Redirect::to(url.as_str()).into_response().with_found();
+    res.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
 }
 
 #[cfg(test)]
@@ -432,6 +438,22 @@ mod tests {
         assert_eq!(v.redirect_uri, "https://app.example.com/cb");
         assert_eq!(v.scope, "mail");
         assert_eq!(v.resource, "https://mail.example.com/mcp");
+    }
+
+    #[test]
+    fn requested_scope_is_ignored_and_mail_granted() {
+        let st = st();
+        let mut p = params(&client(&st));
+        p.scope = Some("evil".into());
+        assert_eq!(validate(&st, &p).unwrap().scope, "mail");
+    }
+
+    #[test]
+    fn empty_state_is_treated_as_absent() {
+        let st = st();
+        let mut p = params(&client(&st));
+        p.state = Some(String::new());
+        assert_eq!(validate(&st, &p).unwrap().state, None);
     }
 
     #[test]

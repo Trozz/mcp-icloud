@@ -30,5 +30,7 @@ pub fn build_app(auth: Arc<AuthState>, mcp: Router) -> Router {
         .layer(middleware::from_fn(http_metrics))
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(|req: &Request| {
+            tracing::info_span!("request", method = %req.method(), path = req.uri().path())
+        }))
 }

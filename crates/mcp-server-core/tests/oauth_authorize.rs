@@ -74,17 +74,9 @@ async fn login_page(app: &axum::Router, cid: &str) -> String {
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(res.headers()["x-frame-options"], "DENY");
     assert_eq!(res.headers()["cache-control"], "no-store");
-    assert!(
-        res.headers()["content-security-policy"]
-            .to_str()
-            .unwrap()
-            .contains("default-src 'none'")
-    );
-    assert!(
-        !res.headers()["content-security-policy"]
-            .to_str()
-            .unwrap()
-            .contains("form-action")
+    assert_eq!(
+        res.headers()["content-security-policy"],
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
     );
     body_text(res).await
 }
@@ -113,6 +105,7 @@ async fn correct_password_redirects_with_code_and_state() {
     let html = login_page(&app, &client_id(&st)).await;
     let res = send(&app, post(&form_fields(&html, PASSWORD))).await;
     assert_eq!(res.status(), StatusCode::FOUND);
+    assert_eq!(res.headers()["cache-control"], "no-store");
     let loc = url::Url::parse(res.headers()["location"].to_str().unwrap()).unwrap();
     assert_eq!(loc.host_str(), Some("app.example.com"));
     let q: std::collections::HashMap<_, _> = loc.query_pairs().into_owned().collect();
@@ -283,4 +276,49 @@ async fn login_page_shows_redirect_host_and_unverified_client_name() {
 
     let html = login_page(&app(st.clone()), &client_id(&st)).await;
     assert!(!html.contains("unverified"), "{html}");
+}
+
+#[tokio::test]
+async fn granted_scope_is_always_mail() {
+    let st = state();
+    let app = app(st.clone());
+    let q = format!(
+        "{}&scope=evil",
+        query(&client_id(&st), "https://app.example.com/cb")
+    );
+    let res = send(&app, get(&format!("/authorize?{q}"))).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body_text(res).await;
+    let mut fields = form_fields(&html, PASSWORD);
+    for f in fields.iter_mut() {
+        if f.0 == "scope" {
+            f.1 = "evil".into();
+        }
+    }
+    let res = send(&app, post(&fields)).await;
+    assert_eq!(res.status(), StatusCode::FOUND);
+    let loc = url::Url::parse(res.headers()["location"].to_str().unwrap()).unwrap();
+    let q: std::collections::HashMap<_, _> = loc.query_pairs().into_owned().collect();
+    let code = st.jwt.verify(&q["code"], TokenKind::Code).unwrap();
+    assert_eq!(code.payload.scope.as_deref(), Some("mail"));
+}
+
+#[tokio::test]
+async fn empty_state_is_omitted_from_redirect() {
+    let st = state();
+    let app = app(st.clone());
+    let q =
+        query(&client_id(&st), "https://app.example.com/cb").replace("state=st%3Cate%3E", "state=");
+    let html = body_text(send(&app, get(&format!("/authorize?{q}"))).await).await;
+    let res = send(&app, post(&form_fields(&html, PASSWORD))).await;
+    assert_eq!(res.status(), StatusCode::FOUND);
+    let loc = url::Url::parse(res.headers()["location"].to_str().unwrap()).unwrap();
+    assert!(loc.query_pairs().any(|(k, _)| k == "code"));
+    assert!(!loc.query_pairs().any(|(k, _)| k == "state"), "{loc}");
+
+    let q = q.replace("code_challenge_method=S256", "code_challenge_method=plain");
+    let res = send(&app, get(&format!("/authorize?{q}"))).await;
+    assert_eq!(res.status(), StatusCode::FOUND);
+    let loc = url::Url::parse(res.headers()["location"].to_str().unwrap()).unwrap();
+    assert!(!loc.query_pairs().any(|(k, _)| k == "state"), "{loc}");
 }

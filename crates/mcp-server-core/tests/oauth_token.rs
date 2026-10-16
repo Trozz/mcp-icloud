@@ -213,11 +213,43 @@ async fn access_token_is_not_accepted_as_refresh() {
         &app(st.clone()),
         form_post(
             "/token",
-            &[("grant_type", "refresh_token"), ("refresh_token", &access)],
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", &access),
+                ("client_id", &cid),
+            ],
         ),
     )
     .await;
     assert_eq!(body_json(res).await["error"], "invalid_grant");
+}
+
+#[tokio::test]
+async fn refresh_grant_requires_client_id() {
+    let st = state();
+    let cid = client(&st);
+    let refresh = st
+        .jwt
+        .issue(
+            TokenKind::Refresh,
+            Some(Duration::from_secs(60)),
+            Payload {
+                client_id: Some(cid),
+                scope: Some("mail".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let res = send(
+        &app(st.clone()),
+        form_post(
+            "/token",
+            &[("grant_type", "refresh_token"), ("refresh_token", &refresh)],
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(res).await["error"], "invalid_request");
 }
 
 #[tokio::test]

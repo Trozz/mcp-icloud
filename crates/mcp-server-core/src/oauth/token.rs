@@ -114,8 +114,11 @@ fn authorization_code(st: &AuthState, req: &TokenRequest) -> Response {
 }
 
 fn refresh(st: &AuthState, req: &TokenRequest) -> Response {
-    let Some(token) = &req.refresh_token else {
-        return oauth_error("invalid_request", "refresh_token is required");
+    let (Some(token), Some(req_client_id)) = (&req.refresh_token, &req.client_id) else {
+        return oauth_error(
+            "invalid_request",
+            "refresh_token and client_id are required",
+        );
     };
     let Ok(claims) = st.jwt.verify(token, TokenKind::Refresh) else {
         return oauth_error("invalid_grant", "invalid or expired refresh token");
@@ -123,7 +126,7 @@ fn refresh(st: &AuthState, req: &TokenRequest) -> Response {
     let Some(client_id) = claims.payload.client_id.clone() else {
         return oauth_error("invalid_grant", "refresh token has no client");
     };
-    if req.client_id.as_ref().is_some_and(|c| *c != client_id) {
+    if *req_client_id != client_id {
         return oauth_error(
             "invalid_grant",
             "refresh token was issued to a different client",
