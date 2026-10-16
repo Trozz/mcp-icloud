@@ -21,7 +21,13 @@ fn check_uids(uids: &[u32]) -> Result<String> {
     Ok(uid_set(uids))
 }
 
-fn known_mailbox(c: &Conn, name: &str) -> Result<()> {
+/// Checks `name` against the mailbox list, refreshing the list once on a miss so mailboxes
+/// created by another client are found.
+async fn known_mailbox(c: &mut Conn, name: &str) -> Result<()> {
+    if c.mailboxes.iter().any(|m| m.name == name) {
+        return Ok(());
+    }
+    c.mailboxes = list_mailboxes(&mut c.session).await?;
     if c.mailboxes.iter().any(|m| m.name == name) {
         return Ok(());
     }
@@ -112,7 +118,7 @@ impl ImapClient {
             ));
         }
         with_conn!(self, "UID MOVE", false, |c| async {
-            known_mailbox(c, target)?;
+            known_mailbox(c, target).await?;
             select(c, mailbox, uidvalidity).await?;
             move_selected(c, &set, target).await
         })

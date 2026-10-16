@@ -6,7 +6,7 @@ use mcp_icloud_mail::imap::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use support::fake_imap::{FakeImap, FakeState};
+use support::fake_imap::{FakeImap, FakeMailbox, FakeState};
 
 fn client(fake: &FakeImap) -> ImapClient {
     ImapClient::new(
@@ -192,6 +192,26 @@ async fn move_to_unknown_mailbox() {
             .await,
         Err(MailError::MailboxNotFound(_))
     ));
+}
+
+#[tokio::test]
+async fn move_to_a_mailbox_created_elsewhere_refreshes_the_list() {
+    let fake = fake_with(&["MOVE", "UIDPLUS"], 1, 0).await;
+    let c = client(&fake);
+    c.uidvalidity("INBOX", None).await.unwrap();
+    fake.state.lock().unwrap().mailboxes.insert(
+        "Projects".into(),
+        FakeMailbox {
+            attrs: vec![],
+            uidvalidity: 3000,
+            uidnext: 1,
+            messages: vec![],
+        },
+    );
+    c.move_messages("INBOX", &[1], "Projects", None)
+        .await
+        .unwrap();
+    assert_eq!(uids(&fake, "Projects"), vec![1]);
 }
 
 #[tokio::test]
