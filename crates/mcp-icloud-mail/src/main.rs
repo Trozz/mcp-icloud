@@ -67,12 +67,13 @@ async fn healthcheck() -> ExitCode {
 }
 
 /// Drops any user directive for async_imap and caps it at info: its trace output contains the
-/// LOGIN command, password included.
+/// LOGIN command, password included. Directives with a `[` are dropped too: span-scoped ones
+/// could re-enable async_imap output.
 fn log_filter(level: &str) -> String {
     let mut parts: Vec<&str> = level
         .split(',')
         .map(str::trim)
-        .filter(|d| !d.is_empty() && !d.starts_with("async_imap"))
+        .filter(|d| !d.is_empty() && !d.starts_with("async_imap") && !d.contains('['))
         .collect();
     parts.push("async_imap=info");
     parts.join(",")
@@ -138,6 +139,10 @@ mod tests {
         assert_eq!(
             log_filter("debug,async_imap=trace,async_imap::client=trace"),
             "debug,async_imap=info"
+        );
+        assert_eq!(
+            log_filter("info,[{x}]=trace,[x]=trace,debug"),
+            "info,debug,async_imap=info"
         );
     }
 }
