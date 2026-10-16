@@ -123,7 +123,7 @@ pub fn init(cfg: &ObservabilityConfig) -> anyhow::Result<ObservabilityGuard> {
     }
     if cfg.unsafe_content {
         tracing::warn!(
-            "DEBUG_UNSAFE_LOG_CONTENT is enabled: message content and raw protocol data WILL be written to logs"
+            "DEBUG_UNSAFE_LOG_CONTENT is enabled: message content WILL be written to logs"
         );
     }
     Ok(ObservabilityGuard { provider })
