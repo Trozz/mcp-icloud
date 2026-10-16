@@ -34,10 +34,10 @@ pub fn uid_set(uids: &[u32]) -> String {
         .join(",")
 }
 
-/// Outcome of a tagged OK: the APPENDUID uid, if the server sent one.
+/// Outcome of a tagged OK: the APPENDUID `(uidvalidity, uid)`, if the server sent one.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Done {
-    pub append_uid: Option<u32>,
+    pub append_uid: Option<(u32, u32)>,
 }
 
 /// Maps a tagged completion to `Done` (OK) or `MailError::Rejected` (NO/BAD).
@@ -54,11 +54,11 @@ fn completion(label: &str, status: &Status, outcome: &Outcome<'_>) -> Result<Don
     }
     Ok(Done {
         append_uid: match &outcome.code {
-            Some(ResponseCode::AppendUid(_, set)) => set
+            Some(ResponseCode::AppendUid(uidvalidity, set)) => set
                 .iter()
                 .map(|m| match m {
-                    UidSetMember::Uid(u) => *u,
-                    UidSetMember::UidRange(r) => *r.start(),
+                    UidSetMember::Uid(u) => (*uidvalidity, *u),
+                    UidSetMember::UidRange(r) => (*uidvalidity, *r.start()),
                 })
                 .next(),
             _ => None,

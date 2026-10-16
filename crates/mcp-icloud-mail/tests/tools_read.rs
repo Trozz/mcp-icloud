@@ -191,13 +191,20 @@ async fn oversized_attachment_is_refused() {
 #[tokio::test]
 async fn get_thread_includes_the_reply_in_sent() {
     let fake = fake().await;
+    fake.state
+        .lock()
+        .unwrap()
+        .mailboxes
+        .get_mut("Sent Messages")
+        .unwrap()
+        .uidvalidity = 2000;
     let v = json(
         &server(&fake, None)
             .get_thread(params(json!({"uid": 1})))
             .await
             .unwrap(),
     );
-    let entries: Vec<(String, String)> = v["messages"]
+    let entries: Vec<(String, String, u64)> = v["messages"]
         .as_array()
         .unwrap()
         .iter()
@@ -205,14 +212,15 @@ async fn get_thread_includes_the_reply_in_sent() {
             (
                 m["mailbox"].as_str().unwrap().to_string(),
                 m["subject"].as_str().unwrap().to_string(),
+                m["uidvalidity"].as_u64().unwrap(),
             )
         })
         .collect();
     assert_eq!(
         entries,
         vec![
-            ("INBOX".to_string(), "Lunch".to_string()),
-            ("Sent Messages".to_string(), "Re: Lunch".to_string()),
+            ("INBOX".to_string(), "Lunch".to_string(), 1000),
+            ("Sent Messages".to_string(), "Re: Lunch".to_string(), 2000),
         ]
     );
 }

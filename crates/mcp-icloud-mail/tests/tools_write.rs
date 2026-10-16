@@ -150,6 +150,7 @@ async fn create_draft_saves_to_drafts_and_keeps_bcc() {
     );
     assert_eq!(v["mailbox"], "Drafts");
     assert_eq!(v["uid"], 1);
+    assert_eq!(v["uidvalidity"], 1000);
     let drafts = fake.messages("Drafts");
     assert_eq!(drafts[0].flags, vec!["\\Draft", "\\Seen"]);
     let raw = raw_text(&fake, "Drafts", 0);
@@ -164,7 +165,7 @@ async fn create_draft_saves_to_drafts_and_keeps_bcc() {
 #[tokio::test]
 async fn create_reply_draft_is_threaded() {
     let fake = fake().await;
-    json(
+    let v = json(
         &server(&fake, None)
             .create_reply_draft(params(
                 json!({"uid": 1, "body_text": "Noon works.", "reply_all": true}),
@@ -172,6 +173,7 @@ async fn create_reply_draft_is_threaded() {
             .await
             .unwrap(),
     );
+    assert_eq!(v["uidvalidity"], 1000);
     let raw = raw_text(&fake, "Drafts", 0);
     assert!(raw.contains("In-Reply-To: <t1@example.com>"), "{raw}");
     assert!(raw.contains("Subject: Re: Lunch"), "{raw}");
@@ -183,7 +185,7 @@ async fn create_reply_draft_is_threaded() {
 #[tokio::test]
 async fn create_forward_draft_reattaches_attachments() {
     let fake = fake().await;
-    json(
+    let v = json(
         &server(&fake, None)
             .create_forward_draft(params(
                 json!({"uid": 2, "to": ["carol@example.com"], "body_text": "FYI"}),
@@ -191,6 +193,7 @@ async fn create_forward_draft_reattaches_attachments() {
             .await
             .unwrap(),
     );
+    assert_eq!(v["uidvalidity"], 1000);
     let raw = raw_text(&fake, "Drafts", 0);
     assert!(raw.contains("Subject: Fwd: scan"), "{raw}");
     assert!(raw.contains("scan.pdf"), "{raw}");

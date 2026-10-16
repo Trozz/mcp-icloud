@@ -233,6 +233,7 @@ pub struct SendDraftParams {
 #[derive(Serialize)]
 struct ThreadEntry {
     mailbox: String,
+    uidvalidity: u32,
     #[serde(flatten)]
     message: MessageSummary,
 }
@@ -293,6 +294,12 @@ fn thread_criteria(ids: &[String]) -> error::Result<Option<String>> {
     Ok(parts.into_iter().reduce(|a, b| format!("OR ({a}) ({b})")))
 }
 
+/// Sort key for an RFC 3339 date: the instant, so different UTC offsets compare correctly.
+fn date_key(date: Option<&str>) -> Option<i64> {
+    date.and_then(mail_parser::DateTime::parse_rfc3339)
+        .map(|d| d.to_timestamp())
+}
+
 impl MailServer {
     pub fn new(
         imap: Arc<ImapClient>,
@@ -323,13 +330,14 @@ impl MailServer {
     /// Saves a built message to the Drafts mailbox and describes where it went.
     async fn save_draft(&self, built: BuiltMessage) -> error::Result<CallToolResult> {
         let drafts = self.imap.role_mailbox(Role::Drafts).await?;
-        let uid = self
+        let (uidvalidity, uid) = self
             .imap
             .append(&drafts, "\\Draft \\Seen", &built.raw, &built.message_id)
             .await?;
         Ok(json_result(&json!({
             "mailbox": drafts,
             "uid": uid,
+            "uidvalidity": uidvalidity,
             "message_id": built.message_id,
             "note": "Saved as a draft. Review it in Mail before sending.",
         })))
@@ -409,11 +417,12 @@ impl MailServer {
         // Keep the most recent ids: References lists the oldest ancestors first.
         let ids: Vec<String> = ids.into_iter().rev().take(THREAD_MAX_IDS).collect();
         let Some(criteria) = thread_criteria(&ids)? else {
-            let (_, s) = self.imap.summaries(&p.mailbox, &[p.uid]).await?;
+            let (uidvalidity, s) = self.imap.summaries(&p.mailbox, &[p.uid]).await?;
             let entries: Vec<ThreadEntry> = s
                 .into_iter()
                 .map(|message| ThreadEntry {
                     mailbox: p.mailbox.clone(),
+                    uidvalidity,
                     message,
                 })
                 .collect();
@@ -432,13 +441,14 @@ impl MailServer {
             if uids.is_empty() {
                 continue;
             }
-            let (_, summaries) = self.imap.summaries(&mailbox, &uids).await?;
+            let (uidvalidity, summaries) = self.imap.summaries(&mailbox, &uids).await?;
             entries.extend(summaries.into_iter().map(|message| ThreadEntry {
                 mailbox: mailbox.clone(),
+                uidvalidity,
                 message,
             }));
         }
-        entries.sort_by(|a, b| a.message.date.cmp(&b.message.date));
+        entries.sort_by_key(|e| date_key(e.message.date.as_deref()));
         Ok(json_result(&json!({ "messages": entries })))
     }
 }
@@ -809,5 +819,18 @@ impl ServerHandler for MailServer {
                 crate::VERSION,
             ))
             .with_instructions(INSTRUCTIONS)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_dates_order_by_instant_not_by_text() {
+        let earlier = date_key(Some("2026-10-15T10:00:00+02:00"));
+        let later = date_key(Some("2026-10-15T09:00:00+00:00"));
+        assert!(earlier < later);
+        assert!(date_key(None) < earlier);
     }
 }

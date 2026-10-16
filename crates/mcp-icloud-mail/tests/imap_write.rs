@@ -318,14 +318,21 @@ async fn create_mailbox_refreshes_the_list() {
     ));
 }
 
+fn drafts_uidvalidity(fake: &FakeImap, uv: u32) {
+    let mut st = fake.state.lock().unwrap();
+    st.mailboxes.get_mut("Drafts").unwrap().uidvalidity = uv;
+}
+
 #[tokio::test]
 async fn append_returns_appenduid() {
     let fake = fake_with(&["MOVE", "UIDPLUS"], 0, 0).await;
-    let uid = client(&fake)
+    drafts_uidvalidity(&fake, 1234);
+    let appended = client(&fake)
         .append("Drafts", "\\Draft \\Seen", &msg(7), "m7@example.com")
         .await
         .unwrap();
-    assert_eq!(uid, Some(1));
+    assert_eq!(appended, (1234, Some(1)));
+    assert!(!fake.log().iter().any(|l| l.starts_with("SELECT")));
     let drafts = fake.messages("Drafts");
     assert_eq!(drafts[0].raw, msg(7));
     assert_eq!(drafts[0].flags, vec!["\\Draft", "\\Seen"]);
@@ -338,11 +345,12 @@ async fn append_without_uidplus_finds_uid_by_message_id() {
         .lock()
         .unwrap()
         .add_message("Drafts", &msg(1), &[]);
-    let uid = client(&fake)
+    drafts_uidvalidity(&fake, 1234);
+    let appended = client(&fake)
         .append("Drafts", "\\Draft", &msg(2), "m2@example.com")
         .await
         .unwrap();
-    assert_eq!(uid, Some(2));
+    assert_eq!(appended, (1234, Some(2)));
     assert!(
         fake.log()
             .iter()

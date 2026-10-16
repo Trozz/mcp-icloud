@@ -193,24 +193,25 @@ impl ImapClient {
         })
     }
 
-    /// Appends a message and returns its uid: from APPENDUID when the server sends it, otherwise
-    /// by searching for its Message-ID (given without angle brackets).
+    /// Appends a message and returns the mailbox UIDVALIDITY and the new uid: from APPENDUID when
+    /// the server sends it, otherwise from SELECT and a search for its Message-ID (given without
+    /// angle brackets).
     pub async fn append(
         &self,
         mailbox: &str,
         flags: &str,
         raw: &[u8],
         message_id: &str,
-    ) -> Result<Option<u32>> {
+    ) -> Result<(u32, Option<u32>)> {
         let header = quote(&format!("<{message_id}>"))?;
         with_conn!(self, "APPEND", false, |c| async {
             let done = append_literal(&mut c.session, mailbox, flags, raw).await?;
-            if let Some(uid) = done.append_uid {
-                return Ok(Some(uid));
+            if let Some((uidvalidity, uid)) = done.append_uid {
+                return Ok((uidvalidity, Some(uid)));
             }
-            select(c, mailbox, None).await?;
+            let uidvalidity = select(c, mailbox, None).await?;
             let uids = search_uids(c, &format!("HEADER Message-ID {header}")).await?;
-            Ok::<_, MailError>(uids.first().copied())
+            Ok::<_, MailError>((uidvalidity, uids.first().copied()))
         })
     }
 }
