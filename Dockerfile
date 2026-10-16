@@ -39,7 +39,7 @@ RUN set -eux; \
 WORKDIR /src
 COPY . .
 ENV APP_VERSION=${APP_VERSION}
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/target,id=target-${TARGETARCH} \
     set -eux; \
     T="$(cat /rust-target)"; \
