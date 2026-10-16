@@ -1,0 +1,6 @@
+target
+.git
+.github
+docs/superpowers
+*.md
+!README.md
