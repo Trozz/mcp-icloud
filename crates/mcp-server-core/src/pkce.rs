@@ -7,7 +7,10 @@ pub fn s256(input: &str) -> String {
 }
 
 pub fn ct_eq(a: &str, b: &str) -> bool {
-    a.as_bytes().ct_eq(b.as_bytes()).into()
+    Sha256::digest(a.as_bytes())
+        .as_slice()
+        .ct_eq(Sha256::digest(b.as_bytes()).as_slice())
+        .into()
 }
 
 fn valid_verifier(v: &str) -> bool {
