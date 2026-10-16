@@ -6,7 +6,7 @@
 
 use crate::error::{MailError, Result};
 use async_imap::imap_proto::rfc4315::UidSetMember;
-use async_imap::imap_proto::{Response, ResponseCode, Status};
+use async_imap::imap_proto::{MailboxDatum, Outcome, RequestId, Response, ResponseCode, Status};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 pub trait ImapStream: AsyncRead + AsyncWrite + Unpin + Send + std::fmt::Debug {}
@@ -40,47 +40,78 @@ pub struct Done {
     pub append_uid: Option<u32>,
 }
 
-/// Reads responses until the tagged completion and maps NO/BAD to `MailError::Rejected`.
-/// Commands are never pipelined, so the first tagged completion belongs to the last command.
-pub async fn read_done(s: &mut ImapSession, label: &str) -> Result<Done> {
+/// Maps a tagged completion to `Done` (OK) or `MailError::Rejected` (NO/BAD).
+fn completion(label: &str, status: &Status, outcome: &Outcome<'_>) -> Result<Done> {
+    if *status != Status::Ok {
+        return Err(MailError::rejected(
+            label,
+            outcome
+                .information
+                .as_deref()
+                .unwrap_or("no details")
+                .to_string(),
+        ));
+    }
+    Ok(Done {
+        append_uid: match &outcome.code {
+            Some(ResponseCode::AppendUid(_, set)) => set
+                .iter()
+                .map(|m| match m {
+                    UidSetMember::Uid(u) => *u,
+                    UidSetMember::UidRange(r) => *r.start(),
+                })
+                .next(),
+            _ => None,
+        },
+    })
+}
+
+/// Reads responses until the completion tagged `id` and maps NO/BAD to `MailError::Rejected`.
+/// Completions carrying any other tag are not ours and are skipped.
+pub async fn read_done(s: &mut ImapSession, label: &str, id: &RequestId) -> Result<Done> {
     loop {
         let Some(resp) = s.read_response().await? else {
             return Err(MailError::Connection("connection closed by server".into()));
         };
-        let Response::Done {
-            status, outcome, ..
+        if let Response::Done {
+            tag,
+            status,
+            outcome,
         } = resp.parsed()
-        else {
-            continue;
-        };
-        return match status {
-            Status::Ok => Ok(Done {
-                append_uid: match &outcome.code {
-                    Some(ResponseCode::AppendUid(_, set)) => set
-                        .iter()
-                        .map(|m| match m {
-                            UidSetMember::Uid(u) => *u,
-                            UidSetMember::UidRange(r) => *r.start(),
-                        })
-                        .next(),
-                    _ => None,
-                },
-            }),
-            _ => Err(MailError::rejected(
-                label,
-                outcome
-                    .information
-                    .as_deref()
-                    .unwrap_or("no details")
-                    .to_string(),
-            )),
-        };
+            && tag == id
+        {
+            return completion(label, status, outcome);
+        }
     }
 }
 
 pub async fn run_checked(s: &mut ImapSession, label: &str, command: &str) -> Result<Done> {
-    s.run_command(command).await?;
-    read_done(s, label).await
+    let id = s.run_command(command).await?;
+    read_done(s, label, &id).await
+}
+
+/// `UID SEARCH`, written by hand because async-imap's `uid_search` returns an empty result on a
+/// tagged NO/BAD. Returns the matching uids in server order.
+pub async fn uid_search(s: &mut ImapSession, criteria: &str) -> Result<Vec<u32>> {
+    let id = s.run_command(format!("UID SEARCH {criteria}")).await?;
+    let mut uids = Vec::new();
+    loop {
+        let Some(resp) = s.read_response().await? else {
+            return Err(MailError::Connection("connection closed by server".into()));
+        };
+        match resp.parsed() {
+            Response::MailboxData(MailboxDatum::Search(ids)) => uids.extend_from_slice(ids),
+            Response::Done {
+                tag,
+                status,
+                outcome,
+            } if tag == &id => {
+                completion("UID SEARCH", status, outcome)?;
+                return Ok(uids);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// APPEND with a synchronizing literal, written by hand because async-imap's `append()` drops the
@@ -92,21 +123,22 @@ pub async fn append_literal(
     raw: &[u8],
 ) -> Result<Done> {
     let command = format!("APPEND {} ({flags}) {{{}}}", quote(mailbox)?, raw.len());
-    s.run_command(&command).await?;
+    let id = s.run_command(&command).await?;
     loop {
         let Some(resp) = s.read_response().await? else {
             return Err(MailError::Connection("connection closed by server".into()));
         };
         match resp.parsed() {
             Response::Continue { .. } => break,
-            Response::Done { outcome, .. } => {
+            Response::Done {
+                tag,
+                status,
+                outcome,
+            } if tag == &id => {
+                completion("APPEND", status, outcome)?;
                 return Err(MailError::rejected(
                     "APPEND",
-                    outcome
-                        .information
-                        .as_deref()
-                        .unwrap_or("no details")
-                        .to_string(),
+                    "the server completed APPEND before accepting the message",
                 ));
             }
             _ => continue,
@@ -116,7 +148,7 @@ pub async fn append_literal(
     stream.write_all(raw).await?;
     stream.write_all(b"\r\n").await?;
     stream.flush().await?;
-    read_done(s, "APPEND").await
+    read_done(s, "APPEND", &id).await
 }
 
 #[cfg(test)]

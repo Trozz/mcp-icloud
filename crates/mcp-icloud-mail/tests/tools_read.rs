@@ -82,6 +82,26 @@ async fn bad_search_date_is_a_tool_error() {
 }
 
 #[tokio::test]
+async fn rejected_search_is_a_tool_error_not_an_empty_page() {
+    let fake = fake().await;
+    fake.state
+        .lock()
+        .unwrap()
+        .fail
+        .insert("SEARCH".into(), "simulated search failure".into());
+    let r = server(&fake, None)
+        .search_messages(params(json!({})))
+        .await
+        .unwrap();
+    assert!(is_error(&r));
+    assert!(
+        text(&r).contains("simulated search failure"),
+        "{}",
+        text(&r)
+    );
+}
+
+#[tokio::test]
 async fn get_message_returns_text_body() {
     let fake = fake().await;
     let v = json(

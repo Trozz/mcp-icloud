@@ -86,6 +86,25 @@ async fn tagged_no_on_store_is_an_error() {
 }
 
 #[tokio::test]
+async fn completion_with_another_tag_is_not_taken_as_ours() {
+    let fake = fake_with(&["MOVE", "UIDPLUS"], 1, 0).await;
+    {
+        let mut st = fake.state.lock().unwrap();
+        st.stale_tag_on = Some("STORE".into());
+        st.fail
+            .insert("STORE".into(), "simulated store failure".into());
+    }
+    let err = client(&fake)
+        .set_flags("INBOX", &[1], None, "\\Flagged", true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, MailError::Rejected { info, .. } if info.contains("simulated store failure")),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn stale_uidvalidity_leaves_mailbox_untouched() {
     let fake = fake_with(&["MOVE", "UIDPLUS"], 2, 0).await;
     let c = client(&fake);

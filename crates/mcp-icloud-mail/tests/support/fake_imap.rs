@@ -34,6 +34,9 @@ pub struct FakeState {
     pub password: String,
     /// Close the connection (no response) the next time this command word arrives. One-shot.
     pub drop_on: Option<String>,
+    /// Send a completion with a foreign tag (`A999 OK stale`) before the real reply the next time
+    /// this command word arrives. One-shot.
+    pub stale_tag_on: Option<String>,
 }
 
 impl FakeState {
@@ -163,14 +166,21 @@ async fn handle(stream: TcpStream, state: Arc<Mutex<FakeState>>) {
             let mut st = state.lock().unwrap();
             st.log.push(rest.clone());
             let word = command_word(&rest);
-            if st.drop_on.as_deref() == Some(word.as_str()) {
+            let stale = if st.stale_tag_on.as_deref() == Some(word.as_str()) {
+                st.stale_tag_on = None;
+                b"A999 OK stale\r\n".to_vec()
+            } else {
+                Vec::new()
+            };
+            let (out, close) = if st.drop_on.as_deref() == Some(word.as_str()) {
                 st.drop_on = None;
                 (Vec::new(), true)
             } else if let Some(msg) = st.fail.remove(&word) {
                 (format!("{tag} NO {msg}\r\n").into_bytes(), false)
             } else {
                 respond(&mut st, &mut selected, &tag, &rest, literal)
-            }
+            };
+            ([stale, out].concat(), close)
         };
         if !out.is_empty() && w.write_all(&out).await.is_err() {
             return;

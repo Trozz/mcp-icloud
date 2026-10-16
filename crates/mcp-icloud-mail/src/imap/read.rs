@@ -1,5 +1,5 @@
 use super::client::{Conn, ImapClient, select, with_conn};
-use super::proto::uid_set;
+use super::proto::{uid_search, uid_set};
 use super::query::{SearchQuery, build_search, decode_cursor, encode_cursor};
 use super::types::{MessageSummary, SearchPage};
 use crate::cache::CacheKey;
@@ -77,8 +77,9 @@ pub(crate) fn summary(f: &Fetch) -> Option<MessageSummary> {
 }
 
 pub(crate) async fn search_uids(c: &mut Conn, criteria: &str) -> Result<Vec<u32>> {
-    let mut uids: Vec<u32> = c.session.uid_search(criteria).await?.into_iter().collect();
+    let mut uids = uid_search(&mut c.session, criteria).await?;
     uids.sort_unstable_by_key(|u| std::cmp::Reverse(*u));
+    uids.dedup();
     Ok(uids)
 }
 

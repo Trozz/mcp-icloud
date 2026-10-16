@@ -169,6 +169,24 @@ async fn tagged_no_on_fetch_is_an_error_not_an_empty_page() {
 }
 
 #[tokio::test]
+async fn tagged_no_on_search_is_an_error_not_an_empty_page() {
+    let fake = inbox_with(2).await;
+    fake.state
+        .lock()
+        .unwrap()
+        .fail
+        .insert("SEARCH".into(), "simulated search failure".into());
+    let err = client(&fake)
+        .search("INBOX", &SearchQuery::default(), 25, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, MailError::Rejected { info, .. } if info.contains("simulated search failure")),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn fetch_raw_uses_cache_and_peek() {
     let fake = inbox_with(2).await;
     let c = client(&fake);
