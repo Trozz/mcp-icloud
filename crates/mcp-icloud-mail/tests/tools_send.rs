@@ -246,3 +246,27 @@ async fn a_message_without_the_draft_flag_is_refused() {
     assert!(sender.sent.lock().unwrap().is_empty());
     assert_eq!(fake.messages("Drafts").len(), 1);
 }
+
+#[tokio::test]
+async fn bcc_with_space_before_the_colon_never_reaches_smtp() {
+    let fake = FakeImap::start(FakeState::icloud_like()).await;
+    let uid = fake.state.lock().unwrap().add_message(
+        "Drafts",
+        b"From: me@icloud.com\r\nTo: bob@example.com\r\nBcc : hidden@example.com\r\nSubject: s\r\n\r\nbody\r\n",
+        &["\\Draft", "\\Seen"],
+    );
+    let sender = Arc::new(RecordingSender::default());
+    let server = server(&fake, Some(sender.clone() as Arc<dyn Sender>));
+    let r = server
+        .send_draft(params(json!({"uid": uid})))
+        .await
+        .unwrap();
+    assert!(!is_error(&r), "{}", text(&r));
+    let sent = sender.sent.lock().unwrap();
+    assert!(
+        sent[0]
+            .recipients
+            .contains(&"hidden@example.com".to_string())
+    );
+    assert!(!String::from_utf8_lossy(&sent[0].raw).contains("hidden@example.com"));
+}

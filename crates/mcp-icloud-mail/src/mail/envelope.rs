@@ -12,6 +12,17 @@ fn header_end(raw: &[u8]) -> usize {
     raw.len()
 }
 
+/// True when `line` starts header `name`: the name, optional spaces or tabs, then a colon.
+fn is_header(line: &[u8], name: &str) -> bool {
+    if line.len() <= name.len() || !line[..name.len()].eq_ignore_ascii_case(name.as_bytes()) {
+        return false;
+    }
+    line[name.len()..]
+        .iter()
+        .find(|&&b| b != b' ' && b != b'\t')
+        == Some(&b':')
+}
+
 /// Removes every occurrence of a header (including folded continuation lines) from the
 /// header section only. The body is never touched.
 pub fn strip_header(raw: &[u8], name: &str) -> Vec<u8> {
@@ -22,9 +33,7 @@ pub fn strip_header(raw: &[u8], name: &str) -> Vec<u8> {
     for line in head.split_inclusive(|&b| b == b'\n') {
         let continuation = matches!(line.first(), Some(b' ' | b'\t'));
         if !continuation {
-            skipping = line.len() > name.len()
-                && line[..name.len()].eq_ignore_ascii_case(name.as_bytes())
-                && line[name.len()] == b':';
+            skipping = is_header(line, name);
         }
         if !skipping {
             out.extend_from_slice(line);
@@ -32,6 +41,22 @@ pub fn strip_header(raw: &[u8], name: &str) -> Vec<u8> {
     }
     out.extend_from_slice(rest);
     out
+}
+
+/// The bytes handed to SMTP: every Bcc header removed, then re-parsed to confirm that the parser
+/// that chose the envelope recipients sees no Bcc header either.
+pub fn strip_bcc(raw: &[u8]) -> Result<Vec<u8>> {
+    let out = strip_header(raw, "Bcc");
+    if parse(&out)?
+        .headers()
+        .iter()
+        .any(|h| h.name == HeaderName::Bcc)
+    {
+        return Err(MailError::Invalid(
+            "the Bcc header could not be removed safely, so the draft was not sent".into(),
+        ));
+    }
+    Ok(out)
 }
 
 /// SMTP envelope recipients: every To, Cc and Bcc header (a message may repeat them),
@@ -81,6 +106,46 @@ mod tests {
         assert!(out.contains("To: Bob <bob@example.com>\r\n"));
         assert!(out.contains("Cc: carol@example.com"));
         assert!(out.contains("\r\n\r\nBody line\r\nBcc: this is body text and must stay\r\n"));
+    }
+
+    #[test]
+    fn strips_bcc_with_whitespace_before_the_colon() {
+        let raw = b"To: a@example.com\r\nBcc : hidden@example.com\r\nBCC\t: tab@example.com\r\nBcc-Note: keep\r\nSubject: s\r\n\r\nbody\r\n";
+        let r = envelope_recipients(raw).unwrap();
+        assert!(r.contains(&"hidden@example.com".to_string()), "{r:?}");
+        let out = strip_bcc(raw).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("hidden@example.com"), "{text}");
+        assert!(!text.contains("tab@example.com"), "{text}");
+        assert!(text.contains("Bcc-Note: keep\r\n"), "{text}");
+    }
+
+    #[test]
+    fn strips_a_long_folded_bcc_list() {
+        let mut raw = b"To: a@example.com\r\nBcc: first@example.com".to_vec();
+        for i in 0..40 {
+            raw.extend_from_slice(format!(",\r\n\tperson{i}@example.com").as_bytes());
+        }
+        raw.extend_from_slice(b"\r\nSubject: s\r\n\r\nbody\r\n");
+        assert_eq!(envelope_recipients(&raw).unwrap().len(), 42);
+        let text = String::from_utf8(strip_bcc(&raw).unwrap()).unwrap();
+        assert!(!text.contains("@example.com,"), "{text}");
+        assert!(!text.contains("person"), "{text}");
+        assert_eq!(text, "To: a@example.com\r\nSubject: s\r\n\r\nbody\r\n");
+    }
+
+    #[test]
+    fn refuses_when_the_parser_still_sees_a_bcc_header() {
+        for raw in [
+            &b" Bcc: a@example.com\r\nTo: b@example.com\r\n\r\nx"[..],
+            b"To: b@example.com\r\nBcc\r: a@example.com\r\n\r\nx",
+        ] {
+            assert!(
+                matches!(strip_bcc(raw), Err(MailError::Invalid(m)) if m.contains("Bcc")),
+                "{}",
+                String::from_utf8_lossy(raw)
+            );
+        }
     }
 
     #[test]

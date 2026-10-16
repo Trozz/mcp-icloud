@@ -2,7 +2,7 @@ use crate::error::{self, MailError};
 use crate::imap::proto::quote;
 use crate::imap::{ImapClient, MessageSummary, Role, SearchQuery};
 use crate::mail::build::{self, BuiltMessage, DraftInput, Identity};
-use crate::mail::envelope::{envelope_recipients, strip_header};
+use crate::mail::envelope::{envelope_recipients, strip_bcc};
 use crate::mail::parse::{self, BodyFormat};
 use crate::smtp::Sender;
 use base64::Engine as _;
@@ -352,7 +352,7 @@ impl MailServer {
         let message_id = parse::view(&raw, BodyFormat::Text, 0)?
             .message_id
             .unwrap_or_default();
-        let outgoing = strip_header(&raw, "Bcc");
+        let outgoing = strip_bcc(&raw)?;
         sender
             .send(&self.settings.identity.email, &recipients, &outgoing)
             .await?;
