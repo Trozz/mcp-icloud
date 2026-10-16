@@ -7,7 +7,7 @@
 use crate::error::{MailError, Result};
 use async_imap::imap_proto::rfc4315::UidSetMember;
 use async_imap::imap_proto::{Response, ResponseCode, Status};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 pub trait ImapStream: AsyncRead + AsyncWrite + Unpin + Send + std::fmt::Debug {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + std::fmt::Debug> ImapStream for T {}
@@ -81,6 +81,42 @@ pub async fn read_done(s: &mut ImapSession, label: &str) -> Result<Done> {
 pub async fn run_checked(s: &mut ImapSession, label: &str, command: &str) -> Result<Done> {
     s.run_command(command).await?;
     read_done(s, label).await
+}
+
+/// APPEND with a synchronizing literal, written by hand because async-imap's `append()` drops the
+/// APPENDUID response code. Returns the tagged completion, including APPENDUID when sent.
+pub async fn append_literal(
+    s: &mut ImapSession,
+    mailbox: &str,
+    flags: &str,
+    raw: &[u8],
+) -> Result<Done> {
+    let command = format!("APPEND {} ({flags}) {{{}}}", quote(mailbox)?, raw.len());
+    s.run_command(&command).await?;
+    loop {
+        let Some(resp) = s.read_response().await? else {
+            return Err(MailError::Connection("connection closed by server".into()));
+        };
+        match resp.parsed() {
+            Response::Continue { .. } => break,
+            Response::Done { outcome, .. } => {
+                return Err(MailError::rejected(
+                    "APPEND",
+                    outcome
+                        .information
+                        .as_deref()
+                        .unwrap_or("no details")
+                        .to_string(),
+                ));
+            }
+            _ => continue,
+        }
+    }
+    let stream = s.as_mut();
+    stream.write_all(raw).await?;
+    stream.write_all(b"\r\n").await?;
+    stream.flush().await?;
+    read_done(s, "APPEND").await
 }
 
 #[cfg(test)]
