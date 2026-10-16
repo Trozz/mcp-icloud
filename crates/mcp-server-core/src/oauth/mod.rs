@@ -1,6 +1,7 @@
 pub mod authorize;
 pub mod metadata;
 pub mod register;
+pub mod token;
 
 use crate::guards::{LoginLimiter, ReplayGuard};
 use crate::jwt::Jwt;
@@ -67,6 +68,7 @@ pub fn oauth_router(state: Arc<AuthState>) -> Router {
             get(metadata::authorization_server),
         )
         .route("/register", post(register::register))
+        .route("/token", post(token::token))
         .route(
             "/authorize",
             get(authorize::get_authorize).post(authorize::post_authorize),
