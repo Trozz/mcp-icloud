@@ -66,11 +66,21 @@ async fn healthcheck() -> ExitCode {
     ExitCode::FAILURE
 }
 
+/// Drops any user directive for async_imap and caps it at info: its trace output contains the
+/// LOGIN command, password included.
+fn log_filter(level: &str) -> String {
+    let mut parts: Vec<&str> = level
+        .split(',')
+        .map(str::trim)
+        .filter(|d| !d.is_empty() && !d.starts_with("async_imap"))
+        .collect();
+    parts.push("async_imap=info");
+    parts.join(",")
+}
+
 async fn run(cfg: MailConfig) -> anyhow::Result<()> {
     let mut obs = cfg.core.observability.clone();
-    if obs.unsafe_content {
-        obs.log_level.push_str(",async_imap=trace,lettre=trace");
-    }
+    obs.log_level = log_filter(&obs.log_level);
     let _guard = observability::init(&obs)?;
     tracing::info!(version = VERSION, "starting mcp-icloud-mail");
 
@@ -113,4 +123,20 @@ async fn run(cfg: MailConfig) -> anyhow::Result<()> {
     let app = build_app(AuthState::new(core.oauth), mcp);
     tracing::info!(addr = %core.bind_addr, mcp_url, "listening");
     tls::serve(app, core.bind_addr, core.tls, shutdown).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn async_imap_is_always_capped_at_info() {
+        assert_eq!(log_filter("info"), "info,async_imap=info");
+        assert_eq!(log_filter("trace"), "trace,async_imap=info");
+        assert_eq!(log_filter(""), "async_imap=info");
+        assert_eq!(
+            log_filter("debug,async_imap=trace,async_imap::client=trace"),
+            "debug,async_imap=info"
+        );
+    }
 }
