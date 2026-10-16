@@ -37,6 +37,7 @@ pub fn settings(max_attachment_bytes: usize) -> Arc<ToolSettings> {
             name: Some("Me Example".into()),
         },
         max_attachment_bytes,
+        send_lock: Default::default(),
     })
 }
 

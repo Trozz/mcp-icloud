@@ -32,9 +32,12 @@ const INSTRUCTIONS: &str = "Tools for one iCloud Mail account. Messages are addr
 Every listing returns the mailbox uidvalidity; pass it back to mutating tools so they refuse to act if the uids went stale. \
 Compose tools only create drafts in the Drafts mailbox for the user to review. Sending is only possible with send_draft, which exists only when the server allows sending.";
 
+/// Shared by every MCP session (the server is built per session and holds an `Arc` of this).
 pub struct ToolSettings {
     pub identity: Identity,
     pub max_attachment_bytes: usize,
+    /// Serializes `send_draft` across all sessions, from fetching the draft to removing it.
+    pub send_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -334,9 +337,17 @@ impl MailServer {
 
     /// SMTP send, then save to Sent, then remove the draft. Once SMTP has accepted the message,
     /// any later failure keeps the draft and says plainly that the message WAS sent.
+    /// Sends are serialized and the draft is read live, so a removed draft can never be resent.
     async fn send(&self, sender: &dyn Sender, p: SendDraftParams) -> error::Result<CallToolResult> {
+        let _serialized = self.settings.send_lock.lock().await;
         let drafts = self.imap.role_mailbox(Role::Drafts).await?;
-        let (uidvalidity, raw) = self.imap.fetch_raw(&drafts, p.uid, p.uidvalidity).await?;
+        let (uidvalidity, raw, flags) = self
+            .imap
+            .fetch_raw_live(&drafts, p.uid, p.uidvalidity)
+            .await?;
+        if !flags.iter().any(|f| f == "\\Draft") {
+            return Err(MailError::Invalid("message is not a draft".into()));
+        }
         let recipients = envelope_recipients(&raw)?;
         let message_id = parse::view(&raw, BodyFormat::Text, 0)?
             .message_id

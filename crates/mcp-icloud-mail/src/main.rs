@@ -107,6 +107,7 @@ async fn run(cfg: MailConfig) -> anyhow::Result<()> {
             name: cfg.from_name.clone(),
         },
         max_attachment_bytes: cfg.max_attachment_bytes,
+        send_lock: Default::default(),
     });
     let tools = MailServer::new(imap.clone(), sender.clone(), settings.clone()).tool_names();
     tracing::info!(send_enabled = cfg.allow_send, tools = ?tools, "tools registered");

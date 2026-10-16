@@ -187,3 +187,62 @@ async fn stale_uidvalidity_sends_nothing() {
     assert!(is_error(&r));
     assert!(s.sender.sent.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn a_draft_is_never_sent_twice() {
+    let s = setup().await;
+    let first = s
+        .server
+        .send_draft(params(json!({"uid": s.draft_uid})))
+        .await
+        .unwrap();
+    assert!(!is_error(&first), "{}", text(&first));
+    let second = s
+        .server
+        .send_draft(params(json!({"uid": s.draft_uid})))
+        .await
+        .unwrap();
+    assert!(is_error(&second));
+    assert!(
+        text(&second).contains("message not found"),
+        "{}",
+        text(&second)
+    );
+    assert_eq!(s.sender.sent.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn concurrent_sends_of_one_draft_send_once() {
+    let s = setup().await;
+    let other_session = s.server.clone();
+    let (a, b) = tokio::join!(
+        s.server.send_draft(params(json!({"uid": s.draft_uid}))),
+        other_session.send_draft(params(json!({"uid": s.draft_uid}))),
+    );
+    let errors = [a.unwrap(), b.unwrap()]
+        .iter()
+        .filter(|r| is_error(r))
+        .count();
+    assert_eq!(errors, 1);
+    assert_eq!(s.sender.sent.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_message_without_the_draft_flag_is_refused() {
+    let fake = FakeImap::start(FakeState::icloud_like()).await;
+    let uid = fake.state.lock().unwrap().add_message(
+        "Drafts",
+        b"From: me@icloud.com\r\nTo: bob@example.com\r\nSubject: not a draft\r\n\r\nbody\r\n",
+        &["\\Seen"],
+    );
+    let sender = Arc::new(RecordingSender::default());
+    let server = server(&fake, Some(sender.clone() as Arc<dyn Sender>));
+    let r = server
+        .send_draft(params(json!({"uid": uid})))
+        .await
+        .unwrap();
+    assert!(is_error(&r));
+    assert!(text(&r).contains("message is not a draft"), "{}", text(&r));
+    assert!(sender.sent.lock().unwrap().is_empty());
+    assert_eq!(fake.messages("Drafts").len(), 1);
+}

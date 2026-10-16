@@ -2,6 +2,7 @@ use super::client::{Conn, ImapClient, list_mailboxes, select, with_conn};
 use super::proto::{append_literal, quote, run_checked, uid_set};
 use super::read::search_uids;
 use super::types::Role;
+use crate::cache::CacheKey;
 use crate::error::{MailError, Result};
 
 const MAX_UIDS: usize = 100;
@@ -75,6 +76,17 @@ async fn move_selected(c: &mut Conn, set: &str, target: &str) -> Result<()> {
 }
 
 impl ImapClient {
+    /// Drops cached bodies of messages about to be moved or expunged from `mailbox`.
+    fn forget(&self, mailbox: &str, uidvalidity: u32, uids: &[u32]) {
+        for &uid in uids {
+            self.cache.remove(&CacheKey {
+                mailbox: mailbox.to_string(),
+                uidvalidity,
+                uid,
+            });
+        }
+    }
+
     /// Adds or removes one system flag (`\Seen`, `\Flagged`, `\Answered`, `\Draft`).
     pub async fn set_flags(
         &self,
@@ -119,7 +131,8 @@ impl ImapClient {
         }
         with_conn!(self, "UID MOVE", false, |c| async {
             known_mailbox(c, target).await?;
-            select(c, mailbox, uidvalidity).await?;
+            let uv = select(c, mailbox, uidvalidity).await?;
+            self.forget(mailbox, uv, uids);
             move_selected(c, &set, target).await
         })
     }
@@ -141,7 +154,8 @@ impl ImapClient {
                         "the messages are already in {trash}; use permanent: true to remove them for good"
                     )));
                 }
-                select(c, mailbox, uidvalidity).await?;
+                let uv = select(c, mailbox, uidvalidity).await?;
+                self.forget(mailbox, uv, uids);
                 return move_selected(c, &set, &trash).await;
             }
             if mailbox != trash {
@@ -154,7 +168,8 @@ impl ImapClient {
                     "permanent delete needs the UIDPLUS extension so that only these messages are expunged".into(),
                 ));
             }
-            select(c, mailbox, uidvalidity).await?;
+            let uv = select(c, mailbox, uidvalidity).await?;
+            self.forget(mailbox, uv, uids);
             run_checked(
                 &mut c.session,
                 "UID STORE",

@@ -1,5 +1,5 @@
 mod support;
-use mcp_icloud_mail::cache::LruMessageCache;
+use mcp_icloud_mail::cache::{CacheKey, LruMessageCache, MessageCache};
 use mcp_icloud_mail::error::MailError;
 use mcp_icloud_mail::imap::{
     COMMAND_TIMEOUT, CONNECT_TIMEOUT, Connector, ImapClient, ImapSettings,
@@ -155,6 +155,51 @@ async fn move_uses_move_when_available() {
     assert_eq!(uids(&fake, "INBOX"), vec![2]);
     assert_eq!(fake.messages("Archive").len(), 1);
     assert!(fake.log().iter().any(|l| l == "UID MOVE 1 \"Archive\""));
+}
+
+fn cached_client(fake: &FakeImap) -> (ImapClient, Arc<LruMessageCache>) {
+    let cache = Arc::new(LruMessageCache::new(1024 * 1024));
+    let c = ImapClient::new(
+        ImapSettings {
+            connector: Connector::Plain {
+                addr: fake.addr.clone(),
+            },
+            username: "me@icloud.com".into(),
+            password: "app-pass".to_string().into(),
+            idle_timeout: Duration::from_secs(600),
+            connect_timeout: CONNECT_TIMEOUT,
+            command_timeout: COMMAND_TIMEOUT,
+        },
+        cache.clone(),
+    );
+    (c, cache)
+}
+
+fn key(mailbox: &str, uid: u32) -> CacheKey {
+    CacheKey {
+        mailbox: mailbox.into(),
+        uidvalidity: 1000,
+        uid,
+    }
+}
+
+#[tokio::test]
+async fn moved_and_deleted_messages_leave_the_cache() {
+    let fake = fake_with(&["MOVE", "UIDPLUS"], 2, 1).await;
+    let (c, cache) = cached_client(&fake);
+    c.fetch_raw("INBOX", 1, None).await.unwrap();
+    c.fetch_raw("INBOX", 2, None).await.unwrap();
+    c.fetch_raw("Deleted Messages", 1, None).await.unwrap();
+    c.move_messages("INBOX", &[1], "Archive", None)
+        .await
+        .unwrap();
+    assert!(cache.get(&key("INBOX", 1)).is_none());
+    c.delete_messages("INBOX", &[2], false, None).await.unwrap();
+    assert!(cache.get(&key("INBOX", 2)).is_none());
+    c.delete_messages("Deleted Messages", &[1], true, None)
+        .await
+        .unwrap();
+    assert!(cache.get(&key("Deleted Messages", 1)).is_none());
 }
 
 #[tokio::test]

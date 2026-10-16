@@ -8,10 +8,12 @@ pub struct CacheKey {
 }
 
 /// Cache of raw message bodies. A (mailbox, UIDVALIDITY, UID) triple identifies immutable
-/// content, so entries never go stale. Flags and listings are never cached.
+/// content, so entries never go stale while the message exists; callers `remove` entries for
+/// messages they move, delete or expunge. Flags and listings are never cached.
 pub trait MessageCache: Send + Sync {
     fn get(&self, key: &CacheKey) -> Option<Arc<Vec<u8>>>;
     fn put(&self, key: CacheKey, raw: Arc<Vec<u8>>);
+    fn remove(&self, key: &CacheKey);
 }
 
 pub struct LruMessageCache {
@@ -69,6 +71,13 @@ impl MessageCache for LruMessageCache {
             inner.bytes -= evicted.len();
         }
     }
+
+    fn remove(&self, key: &CacheKey) {
+        let mut inner = self.inner.lock().expect("cache lock");
+        if let Some(old) = inner.lru.pop(key) {
+            inner.bytes -= old.len();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +132,18 @@ mod tests {
         c.put(key(1), Arc::new(vec![0; 10]));
         c.put(key(1), Arc::new(vec![0; 30]));
         assert_eq!(c.bytes(), 30);
+    }
+
+    #[test]
+    fn remove_drops_the_entry_and_its_bytes() {
+        let c = LruMessageCache::new(100);
+        c.put(key(1), Arc::new(vec![0; 10]));
+        c.put(key(2), Arc::new(vec![0; 10]));
+        c.remove(&key(1));
+        c.remove(&key(3));
+        assert!(c.get(&key(1)).is_none());
+        assert!(c.get(&key(2)).is_some());
+        assert_eq!(c.bytes(), 10);
     }
 
     #[test]

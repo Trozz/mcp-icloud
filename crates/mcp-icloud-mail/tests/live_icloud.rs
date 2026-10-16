@@ -165,6 +165,7 @@ async fn live_draft_round_trip() {
                 name: Some("mcp-icloud-mail live test".into()),
             },
             max_attachment_bytes: 1024 * 1024,
+            send_lock: Default::default(),
         }),
     );
     let v = json(

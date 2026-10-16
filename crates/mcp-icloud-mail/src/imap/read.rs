@@ -105,19 +105,20 @@ pub(crate) async fn summaries(c: &mut Conn, uids: &[u32]) -> Result<Vec<MessageS
     Ok(out)
 }
 
-pub(crate) async fn fetch_body(c: &mut Conn, uid: u32) -> Result<Vec<u8>> {
+/// Body and flags of one message. `items` must include `BODY.PEEK[]`.
+async fn fetch_message(c: &mut Conn, uid: u32, items: &str) -> Result<(Vec<u8>, Vec<String>)> {
     let fetches: Vec<Fetch> = c
         .session
-        .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
+        .uid_fetch(uid.to_string(), items)
         .await?
         .try_collect()
         .await?;
-    fetches
+    let f = fetches
         .iter()
         .find(|f| f.uid == Some(uid))
-        .and_then(|f| f.body())
-        .map(<[u8]>::to_vec)
-        .ok_or(MailError::MessageNotFound(uid))
+        .ok_or(MailError::MessageNotFound(uid))?;
+    let body = f.body().ok_or(MailError::MessageNotFound(uid))?.to_vec();
+    Ok((body, f.flags().map(|fl| flag_name(&fl)).collect()))
 }
 
 impl ImapClient {
@@ -201,9 +202,25 @@ impl ImapClient {
             if let Some(raw) = self.cache.get(&key) {
                 return Ok((uidvalidity, raw));
             }
-            let raw = Arc::new(fetch_body(c, uid).await?);
+            let (raw, _) = fetch_message(c, uid, "(UID BODY.PEEK[])").await?;
+            let raw = Arc::new(raw);
             self.cache.put(key, raw.clone());
             Ok::<_, MailError>((uidvalidity, raw))
+        })
+    }
+
+    /// Like `fetch_raw` but always fetched from the server (never from or into the cache), with
+    /// the message flags. For decisions that must see the current state, like sending a draft.
+    pub async fn fetch_raw_live(
+        &self,
+        mailbox: &str,
+        uid: u32,
+        expected_uv: Option<u32>,
+    ) -> Result<(u32, Vec<u8>, Vec<String>)> {
+        with_conn!(self, "UID FETCH", true, |c| async {
+            let uidvalidity = select(c, mailbox, expected_uv).await?;
+            let (raw, flags) = fetch_message(c, uid, "(UID FLAGS BODY.PEEK[])").await?;
+            Ok::<_, MailError>((uidvalidity, raw, flags))
         })
     }
 }
