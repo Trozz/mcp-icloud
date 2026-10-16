@@ -1,7 +1,10 @@
 pub mod authorize;
 pub mod metadata;
+pub mod middleware;
 pub mod register;
 pub mod token;
+
+pub use middleware::require_bearer;
 
 use crate::guards::{LoginLimiter, ReplayGuard};
 use crate::jwt::Jwt;
