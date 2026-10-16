@@ -1,3 +1,4 @@
+pub mod authorize;
 pub mod metadata;
 pub mod register;
 
