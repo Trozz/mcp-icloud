@@ -26,6 +26,9 @@ pub enum Connector {
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Limit for each IMAP operation on an established connection.
 pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+/// After a rejected login, new logins are refused for this long so a bad app password does not
+/// get the Apple ID throttled.
+const AUTH_BACKOFF: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct ImapSettings {
@@ -64,6 +67,7 @@ pub struct ImapClient {
     pub(crate) settings: ImapSettings,
     pub(crate) cache: Arc<dyn MessageCache>,
     pub(crate) inner: Mutex<Option<Conn>>,
+    auth_failed_at: std::sync::Mutex<Option<Instant>>,
 }
 
 /// Runs `$body` (an expression producing a future, with `$c: &mut Conn` in scope) on the shared
@@ -211,6 +215,7 @@ impl ImapClient {
             settings,
             cache,
             inner: Mutex::new(None),
+            auth_failed_at: std::sync::Mutex::new(None),
         }
     }
 
@@ -231,14 +236,28 @@ impl ImapClient {
         }
     }
 
+    fn auth_backoff_active(&self) -> bool {
+        self.auth_failed_at
+            .lock()
+            .expect("auth backoff lock")
+            .is_some_and(|at| at.elapsed() < AUTH_BACKOFF)
+    }
+
+    fn record_auth_failure(&self, failed: bool) {
+        *self.auth_failed_at.lock().expect("auth backoff lock") = failed.then(Instant::now);
+    }
+
     async fn connect(&self) -> Result<Conn> {
+        if self.auth_backoff_active() {
+            return Err(MailError::AuthFailed);
+        }
         let stream = self.open_stream().await?;
         let mut client = async_imap::Client::new(stream);
         client
             .read_response()
             .await?
             .ok_or_else(|| MailError::Connection("no greeting from server".into()))?;
-        let mut session = client
+        let session = client
             .login(
                 &self.settings.username,
                 self.settings.password.expose_secret(),
@@ -247,7 +266,9 @@ impl ImapClient {
             .map_err(|(e, _)| match e {
                 async_imap::error::Error::No(_) => MailError::AuthFailed,
                 other => other.into(),
-            })?;
+            });
+        self.record_auth_failure(matches!(session, Err(MailError::AuthFailed)));
+        let mut session = session?;
         let caps = session.capabilities().await?;
         let caps = Caps {
             move_: caps.has_str("MOVE"),

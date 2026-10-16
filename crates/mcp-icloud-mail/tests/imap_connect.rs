@@ -32,6 +32,18 @@ async fn wrong_password_is_auth_failed() {
 }
 
 #[tokio::test]
+async fn failed_login_is_not_retried_during_the_backoff() {
+    let fake = FakeImap::start(FakeState::icloud_like()).await;
+    let c = client(&fake, "wrong");
+    for _ in 0..2 {
+        let err = c.mailboxes().await.unwrap_err();
+        assert!(matches!(err, MailError::AuthFailed), "{err}");
+    }
+    let logins = fake.log().iter().filter(|l| l.starts_with("LOGIN")).count();
+    assert_eq!(logins, 1, "the second call must not hit LOGIN");
+}
+
+#[tokio::test]
 async fn lists_mailboxes_with_roles_and_counts() {
     let mut st = FakeState::icloud_like();
     st.add_message("INBOX", b"Subject: a\r\n\r\nx", &["\\Seen"]);
