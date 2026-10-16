@@ -19,7 +19,7 @@ pub fn validate_redirect_uri(uri: &str) -> bool {
     let Ok(url) = url::Url::parse(uri) else {
         return false;
     };
-    if url.fragment().is_some() {
+    if url.fragment().is_some() || !url.username().is_empty() || url.password().is_some() {
         return false;
     }
     match url.scheme() {
@@ -46,7 +46,7 @@ pub async fn register(
             .increment(1);
         return error(
             "invalid_redirect_uri",
-            "redirect_uris must be https, or http on a loopback host, without fragments",
+            "redirect_uris must be https, or http on a loopback host, without fragments or userinfo",
         );
     }
     let payload = Payload {

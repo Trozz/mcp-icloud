@@ -81,6 +81,9 @@ async fn register_rejects_bad_redirect_uris() {
         json!(["not a url"]),
         json!(["https://a.example.com/cb#frag"]),
         json!(["javascript:alert(1)"]),
+        json!(["https://user@a.example.com/cb"]),
+        json!(["https://user:pass@a.example.com/cb"]),
+        json!(["https://:pass@a.example.com/cb"]),
     ] {
         let res = send(&app, json_post("/register", json!({"redirect_uris": uris}))).await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{uris}");

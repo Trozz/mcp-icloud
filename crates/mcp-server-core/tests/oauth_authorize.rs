@@ -256,3 +256,31 @@ async fn forwarded_for_is_honoured_from_trusted_proxy() {
     let status = fail_five_times_then_try(st, "198.51.100.3", "198.51.100.3").await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
+
+#[tokio::test]
+async fn login_page_shows_redirect_host_and_unverified_client_name() {
+    let st = state();
+    let cid = st
+        .jwt
+        .issue(
+            TokenKind::Client,
+            None,
+            Payload {
+                redirect_uris: Some(vec!["https://app.example.com/cb".into()]),
+                client_name: Some("Claude <b>".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let html = login_page(&app(st.clone()), &cid).await;
+    assert!(
+        html.contains("After you authorize, you will be sent to <strong>app.example.com</strong>."),
+        "{html}"
+    );
+    assert!(html.contains("Claude &lt;b&gt;"), "{html}");
+    assert!(!html.contains("Claude <b>"), "{html}");
+    assert!(html.contains("self-reported, unverified"), "{html}");
+
+    let html = login_page(&app(st.clone()), &client_id(&st)).await;
+    assert!(!html.contains("unverified"), "{html}");
+}

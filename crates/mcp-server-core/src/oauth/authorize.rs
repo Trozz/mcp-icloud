@@ -43,6 +43,7 @@ pub struct ValidRequest {
     pub state: Option<String>,
     pub scope: String,
     pub resource: String,
+    pub client_name: Option<String>,
 }
 
 pub fn validate(st: &AuthState, p: &AuthorizeParams) -> Result<ValidRequest, Rejection> {
@@ -99,6 +100,7 @@ pub fn validate(st: &AuthState, p: &AuthorizeParams) -> Result<ValidRequest, Rej
         state: p.state.clone(),
         scope: p.scope.clone().unwrap_or_else(|| "mail".into()),
         resource,
+        client_name: client.payload.client_name,
     })
 }
 
@@ -229,13 +231,28 @@ fn login_page(
         )
     })
     .collect::<String>();
+    let destination = url::Url::parse(&v.redirect_uri)
+        .ok()
+        .and_then(|u| u.host_str().map(escape))
+        .map(|h| format!("<p>After you authorize, you will be sent to <strong>{h}</strong>.</p>"))
+        .unwrap_or_default();
+    let client_html = v
+        .client_name
+        .as_deref()
+        .map(|n| {
+            format!(
+                "<p>Client name (self-reported, unverified): <strong>{}</strong></p>",
+                escape(n)
+            )
+        })
+        .unwrap_or_default();
     let error_html = error
         .map(|e| format!("<p style=\"color:#b00\">{}</p>", escape(e)))
         .unwrap_or_default();
     let html = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">\
 <title>Authorize</title><style>body{{font-family:system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem}}input[type=password]{{width:100%;padding:.5rem}}button{{margin-top:1rem;padding:.5rem 1rem}}</style></head>\
-<body><h1>Authorize access</h1><p>An MCP client is requesting access to this mail server.</p>{error_html}\
+<body><h1>Authorize access</h1><p>An MCP client is requesting access to this mail server.</p>{client_html}{destination}{error_html}\
 <form method=\"post\" action=\"/authorize\">{hidden}<label>Password<input type=\"password\" name=\"password\" autofocus required></label>\
 <button type=\"submit\">Authorize</button></form></body></html>"
     );
