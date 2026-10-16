@@ -1,7 +1,7 @@
 use crate::error::{self, MailError};
 use crate::imap::proto::quote;
 use crate::imap::{ImapClient, MessageSummary, Role, SearchQuery};
-use crate::mail::build::Identity;
+use crate::mail::build::{self, BuiltMessage, DraftInput, Identity};
 use crate::mail::parse::{self, BodyFormat};
 use crate::smtp::Sender;
 use base64::Engine as _;
@@ -108,6 +108,114 @@ pub struct MessageRef {
     pub uid: u32,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct MarkParams {
+    /// Mailbox the messages are in. Default INBOX.
+    #[serde(default = "default_inbox")]
+    pub mailbox: String,
+    /// 1 to 100 uids.
+    pub uids: Vec<u32>,
+    /// true marks as read, false as unread.
+    pub seen: Option<bool>,
+    /// true flags, false unflags.
+    pub flagged: Option<bool>,
+    /// uidvalidity from the listing the uids came from. Recommended.
+    pub uidvalidity: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct MoveParams {
+    /// Mailbox the messages are in. Default INBOX.
+    #[serde(default = "default_inbox")]
+    pub mailbox: String,
+    /// 1 to 100 uids.
+    pub uids: Vec<u32>,
+    /// Destination mailbox name.
+    pub target_mailbox: String,
+    /// uidvalidity from the listing the uids came from. Recommended.
+    pub uidvalidity: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DeleteParams {
+    /// Mailbox the messages are in. Default INBOX.
+    #[serde(default = "default_inbox")]
+    pub mailbox: String,
+    /// 1 to 100 uids.
+    pub uids: Vec<u32>,
+    /// Remove for good. Only allowed for messages already in Trash.
+    #[serde(default)]
+    pub permanent: bool,
+    /// uidvalidity from the listing the uids came from. Recommended.
+    pub uidvalidity: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct CreateMailboxParams {
+    /// Name of the new mailbox (folder).
+    pub name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DraftParams {
+    /// Recipients, as "name@example.com" or "Name <name@example.com>".
+    #[serde(default)]
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    #[serde(default)]
+    pub bcc: Vec<String>,
+    #[serde(default)]
+    pub subject: String,
+    /// Plain text body.
+    #[serde(default)]
+    pub body_text: String,
+    /// Optional HTML body, sent alongside the text body.
+    pub body_html: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ReplyParams {
+    /// Mailbox the original message is in. Default INBOX.
+    #[serde(default = "default_inbox")]
+    pub mailbox: String,
+    /// uid of the message being replied to.
+    pub uid: u32,
+    /// Text of the reply. The original message is quoted below it.
+    pub body_text: String,
+    /// Also reply to the original To and Cc recipients.
+    #[serde(default)]
+    pub reply_all: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ForwardParams {
+    /// Mailbox the original message is in. Default INBOX.
+    #[serde(default = "default_inbox")]
+    pub mailbox: String,
+    /// uid of the message being forwarded.
+    pub uid: u32,
+    /// Recipients of the forward.
+    pub to: Vec<String>,
+    /// Text placed above the forwarded message.
+    #[serde(default)]
+    pub body_text: String,
+    /// Re-attach the original attachments. Default true.
+    #[serde(default = "yes")]
+    pub include_attachments: bool,
+}
+
 #[derive(Serialize)]
 struct ThreadEntry {
     mailbox: String,
@@ -180,7 +288,7 @@ impl MailServer {
         Self {
             imap,
             settings,
-            tool_router: Self::read_router(),
+            tool_router: Self::read_router() + Self::write_router(),
         }
     }
 
@@ -191,6 +299,21 @@ impl MailServer {
             .into_iter()
             .map(|t| t.name.to_string())
             .collect()
+    }
+
+    /// Saves a built message to the Drafts mailbox and describes where it went.
+    async fn save_draft(&self, built: BuiltMessage) -> error::Result<CallToolResult> {
+        let drafts = self.imap.role_mailbox(Role::Drafts).await?;
+        let uid = self
+            .imap
+            .append(&drafts, "\\Draft \\Seen", &built.raw, &built.message_id)
+            .await?;
+        Ok(json_result(&json!({
+            "mailbox": drafts,
+            "uid": uid,
+            "message_id": built.message_id,
+            "note": "Saved as a draft. Review it in Mail before sending.",
+        })))
     }
 
     async fn thread(&self, p: MessageRef) -> error::Result<CallToolResult> {
@@ -365,6 +488,211 @@ impl MailServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!(args = ?p, "get_thread");
         run("get_thread", self.thread(p)).await
+    }
+}
+
+#[tool_router(router = write_router)]
+impl MailServer {
+    #[tool(
+        description = "Mark messages as read or unread, and/or flagged or unflagged.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn mark_messages(
+        &self,
+        Parameters(p): Parameters<MarkParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "mark_messages");
+        run("mark_messages", async {
+            if p.seen.is_none() && p.flagged.is_none() {
+                return Err(MailError::Invalid("set seen and/or flagged".into()));
+            }
+            for (flag, value) in [("\\Seen", p.seen), ("\\Flagged", p.flagged)] {
+                if let Some(add) = value {
+                    self.imap
+                        .set_flags(&p.mailbox, &p.uids, p.uidvalidity, flag, add)
+                        .await?;
+                }
+            }
+            Ok(json_result(
+                &json!({ "mailbox": p.mailbox, "uids": p.uids, "updated": true }),
+            ))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Move messages to another mailbox.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn move_messages(
+        &self,
+        Parameters(p): Parameters<MoveParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "move_messages");
+        run("move_messages", async {
+            self.imap
+                .move_messages(&p.mailbox, &p.uids, &p.target_mailbox, p.uidvalidity)
+                .await?;
+            Ok(json_result(&json!({
+                "from": p.mailbox,
+                "to": p.target_mailbox,
+                "uids": p.uids,
+                "moved": true,
+            })))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Delete messages by moving them to Trash. With permanent: true, messages already in Trash are removed for good.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn delete_messages(
+        &self,
+        Parameters(p): Parameters<DeleteParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "delete_messages");
+        run("delete_messages", async {
+            self.imap
+                .delete_messages(&p.mailbox, &p.uids, p.permanent, p.uidvalidity)
+                .await?;
+            Ok(json_result(&json!({
+                "mailbox": p.mailbox,
+                "uids": p.uids,
+                "permanent": p.permanent,
+                "deleted": true,
+            })))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create a new mailbox (folder).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn create_mailbox(
+        &self,
+        Parameters(p): Parameters<CreateMailboxParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "create_mailbox");
+        run("create_mailbox", async {
+            self.imap.create_mailbox(&p.name).await?;
+            Ok(json_result(&json!({ "mailbox": p.name, "created": true })))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create a new draft in the Drafts mailbox. Nothing is sent.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn create_draft(
+        &self,
+        Parameters(p): Parameters<DraftParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(
+            to = p.to.len(),
+            cc = p.cc.len(),
+            bcc = p.bcc.len(),
+            "create_draft"
+        );
+        run("create_draft", async {
+            let built = build::build_draft(
+                &self.settings.identity,
+                &DraftInput {
+                    to: p.to,
+                    cc: p.cc,
+                    bcc: p.bcc,
+                    subject: p.subject,
+                    body_text: p.body_text,
+                    body_html: p.body_html,
+                },
+            )?;
+            self.save_draft(built).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create a reply draft to a message (threaded, original quoted). Nothing is sent.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn create_reply_draft(
+        &self,
+        Parameters(p): Parameters<ReplyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(mailbox = %p.mailbox, uid = p.uid, reply_all = p.reply_all, "create_reply_draft");
+        run("create_reply_draft", async {
+            let (_, raw) = self.imap.fetch_raw(&p.mailbox, p.uid, None).await?;
+            let identity = &self.settings.identity;
+            let built = build::build_reply(
+                identity,
+                std::slice::from_ref(&identity.email),
+                &raw,
+                &p.body_text,
+                p.reply_all,
+            )?;
+            self.save_draft(built).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create a forward draft of a message, optionally with its attachments. Nothing is sent.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn create_forward_draft(
+        &self,
+        Parameters(p): Parameters<ForwardParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(mailbox = %p.mailbox, uid = p.uid, to = p.to.len(), "create_forward_draft");
+        run("create_forward_draft", async {
+            let (_, raw) = self.imap.fetch_raw(&p.mailbox, p.uid, None).await?;
+            let built = build::build_forward(
+                &self.settings.identity,
+                &raw,
+                &p.to,
+                &p.body_text,
+                p.include_attachments,
+            )?;
+            self.save_draft(built).await
+        })
+        .await
     }
 }
 
