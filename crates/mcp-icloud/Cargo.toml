@@ -1,0 +1,23 @@
+[package]
+name = "mcp-icloud"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mcp-server-core = { path = "../mcp-server-core" }
+mcp-icloud-mail = { path = "../mcp-icloud-mail" }
+mcp-icloud-calendar = { path = "../mcp-icloud-calendar" }
+anyhow.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
+http-body-util.workspace = true
+serde_json.workspace = true
+tracing-subscriber.workspace = true
+tokio-util.workspace = true

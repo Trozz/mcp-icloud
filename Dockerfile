@@ -43,13 +43,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/target,id=target-${TARGETARCH} \
     set -eux; \
     T="$(cat /rust-target)"; \
-    cargo zigbuild --release --locked -p mcp-icloud-mail --target "$T"; \
-    cp "target/$T/release/mcp-icloud-mail" /mcp-icloud-mail
+    cargo zigbuild --release --locked -p mcp-icloud --target "$T"; \
+    cp "target/$T/release/mcp-icloud" /mcp-icloud
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=builder /mcp-icloud-mail /mcp-icloud-mail
+COPY --from=builder /mcp-icloud /mcp-icloud
 USER 65532:65532
 EXPOSE 8443
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/mcp-icloud-mail", "--healthcheck"]
-ENTRYPOINT ["/mcp-icloud-mail"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/mcp-icloud", "--healthcheck"]
+ENTRYPOINT ["/mcp-icloud"]

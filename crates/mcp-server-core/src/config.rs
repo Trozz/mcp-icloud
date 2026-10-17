@@ -230,8 +230,9 @@ impl CoreConfig {
         })
     }
 
-    pub fn mcp_url(&self) -> String {
-        format!("{}/mcp", self.public_url)
+    /// External URL of a service mounted at `/<service>`.
+    pub fn service_url(&self, service: &str) -> String {
+        format!("{}/{service}", self.public_url)
     }
 }
 
@@ -346,7 +347,7 @@ mod tests {
         let c = c.unwrap();
         assert_eq!(c.public_url, "https://mail.example.com");
         assert_eq!(c.public_host, "mail.example.com");
-        assert_eq!(c.mcp_url(), "https://mail.example.com/mcp");
+        assert_eq!(c.service_url("mail"), "https://mail.example.com/mail");
         assert_eq!(c.bind_addr.to_string(), "0.0.0.0:8443");
         assert!(matches!(c.tls, crate::tls::TlsMode::SelfSigned { .. }));
         assert!(matches!(

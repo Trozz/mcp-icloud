@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Computes the next version for one binary of this workspace.
+# Computes the next version of the mcp-icloud server.
 # See README "Releases" for the rules. Writes key=value lines to stdout and $GITHUB_OUTPUT.
 set -euo pipefail
 
@@ -57,7 +57,7 @@ apply_bump() {
 }
 
 latest_stable_tag() {
-  { git tag --list "$1-v*" --sort=-v:refname | grep -E "^$1-v[0-9]+\.[0-9]+\.[0-9]+$" || true; } | head -n1
+  { git tag --list "$1[0-9]*" --sort=-v:refname | grep -E "^$1[0-9]+\.[0-9]+\.[0-9]+$" || true; } | head -n1
 }
 
 last_release_tag() {
@@ -65,16 +65,16 @@ last_release_tag() {
     latest_stable_tag "$1"
     return
   fi
-  git describe --tags --abbrev=0 --match "$1-v*" HEAD 2>/dev/null || true
+  git describe --tags --abbrev=0 --match "$1[0-9]*" HEAD 2>/dev/null || true
 }
 
 has_relevant_changes() {
-  local since="$1" crate="$2"
+  local since="$1"
   if [[ -z "$since" ]]; then
     return 0
   fi
   git diff --name-only "$since" HEAD \
-    | grep -qE "^(crates/${crate}/|crates/mcp-server-core/|Cargo\.lock$|Cargo\.toml$|Dockerfile$)"
+    | grep -qE "^(crates/|Cargo\.lock$|Cargo\.toml$|Dockerfile$)"
 }
 
 lookup_pr() {
@@ -97,7 +97,7 @@ lookup_pr() {
 
 main() {
   : "${BRANCH:?BRANCH must be develop or main}"
-  local prefix="${PREFIX:-mail}" crate="${CRATE:-mcp-icloud-mail}"
+  local prefix="${TAG_PREFIX:-v}"
   if [[ "$BRANCH" != "develop" && "$BRANCH" != "main" ]]; then
     echo "BRANCH must be develop or main, got '$BRANCH'" >&2
     return 1
@@ -109,17 +109,17 @@ main() {
   stable="$(latest_stable_tag "$prefix")"
   base="0.0.0"
   if [[ -n "$stable" ]]; then
-    base="${stable#"${prefix}-v"}"
+    base="${stable#"${prefix}"}"
   fi
   version="$(apply_bump "$base" "$bump")"
   if [[ "$BRANCH" == "develop" ]]; then
     version="${version}-dev.${RUN_NUMBER:?RUN_NUMBER is required on develop}"
   fi
-  tag="${prefix}-v${version}"
+  tag="${prefix}${version}"
 
   last="$(last_release_tag "$prefix" "$BRANCH")"
   release=false
-  if has_relevant_changes "$last" "$crate"; then
+  if has_relevant_changes "$last"; then
     release=true
   fi
   if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then

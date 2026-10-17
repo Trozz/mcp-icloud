@@ -1,0 +1,5 @@
+version: 2
+secret:
+  ignored_matches:
+    - name: test-only iCloud app password placeholder
+      match: abcd-efgh-ijkl-mnop

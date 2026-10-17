@@ -87,19 +87,28 @@ pub fn validate(st: &AuthState, p: &AuthorizeParams) -> Result<ValidRequest, Rej
     let Some(code_challenge) = p.code_challenge.clone().filter(|c| c.len() == 43) else {
         return Err(redirect("invalid_request", "code_challenge is required"));
     };
-    let resource = p.resource.clone().unwrap_or_else(|| st.resource());
-    if resource != st.resource() {
+    let resource = match (p.resource.as_deref(), st.services()) {
+        (Some(r), _) => r.to_string(),
+        (None, [only]) => st.resource(only),
+        (None, _) => {
+            return Err(redirect(
+                "invalid_target",
+                "resource is required because this server hosts several services",
+            ));
+        }
+    };
+    let Some(service) = st.service_for_resource(&resource) else {
         return Err(redirect(
             "invalid_target",
-            "resource does not match this server",
+            "resource is not a service on this server",
         ));
-    }
+    };
     Ok(ValidRequest {
         client_id: client_id.to_string(),
         redirect_uri: redirect_uri.to_string(),
         code_challenge,
         state,
-        scope: "mail".into(),
+        scope: service.to_string(),
         resource,
         client_name: client.payload.client_name,
     })
@@ -252,10 +261,11 @@ fn login_page(
     let error_html = error
         .map(|e| format!("<p style=\"color:#b00\">{}</p>", escape(e)))
         .unwrap_or_default();
+    let service = escape(&v.scope);
     let html = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">\
 <title>Authorize</title><style>body{{font-family:system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem}}input[type=password]{{width:100%;padding:.5rem}}button{{margin-top:1rem;padding:.5rem 1rem}}</style></head>\
-<body><h1>Authorize access</h1><p>An MCP client is requesting access to this mail server.</p>{client_html}{destination}{error_html}\
+<body><h1>Authorize access</h1><p>An MCP client is requesting access to the <strong>{service}</strong> service on this server.</p>{client_html}{destination}{error_html}\
 <form method=\"post\" action=\"/authorize\">{hidden}<label>Password<input type=\"password\" name=\"password\" autofocus required></label>\
 <button type=\"submit\">Authorize</button></form></body></html>"
     );
@@ -395,14 +405,21 @@ mod tests {
     use crate::jwt::Payload;
     use crate::oauth::OAuthSettings;
 
+    fn st_with(services: &[&str]) -> std::sync::Arc<AuthState> {
+        AuthState::new(
+            OAuthSettings {
+                public_url: "https://mail.example.com".into(),
+                signing_key: "0123456789abcdef0123456789abcdef".to_string().into(),
+                admin_password: "pw".to_string().into(),
+                static_token: None,
+                trusted_proxies: Vec::new(),
+            },
+            services,
+        )
+    }
+
     fn st() -> std::sync::Arc<AuthState> {
-        AuthState::new(OAuthSettings {
-            public_url: "https://mail.example.com".into(),
-            signing_key: "0123456789abcdef0123456789abcdef".to_string().into(),
-            admin_password: "pw".to_string().into(),
-            static_token: None,
-            trusted_proxies: Vec::new(),
-        })
+        st_with(&["mail"])
     }
 
     fn client(st: &AuthState) -> String {
@@ -427,7 +444,7 @@ mod tests {
             code_challenge_method: Some("S256".into()),
             state: Some("xyz".into()),
             scope: None,
-            resource: Some("https://mail.example.com/mcp".into()),
+            resource: Some("https://mail.example.com/mail".into()),
         }
     }
 
@@ -437,11 +454,11 @@ mod tests {
         let v = validate(&st, &params(&client(&st))).unwrap();
         assert_eq!(v.redirect_uri, "https://app.example.com/cb");
         assert_eq!(v.scope, "mail");
-        assert_eq!(v.resource, "https://mail.example.com/mcp");
+        assert_eq!(v.resource, "https://mail.example.com/mail");
     }
 
     #[test]
-    fn requested_scope_is_ignored_and_mail_granted() {
+    fn requested_scope_is_ignored_and_the_resource_service_granted() {
         let st = st();
         let mut p = params(&client(&st));
         p.scope = Some("evil".into());
@@ -457,14 +474,37 @@ mod tests {
     }
 
     #[test]
-    fn missing_resource_defaults_to_mcp_url() {
+    fn missing_resource_defaults_to_the_only_service() {
         let st = st();
         let mut p = params(&client(&st));
         p.resource = None;
-        assert_eq!(
-            validate(&st, &p).unwrap().resource,
-            "https://mail.example.com/mcp"
-        );
+        let v = validate(&st, &p).unwrap();
+        assert_eq!(v.resource, "https://mail.example.com/mail");
+        assert_eq!(v.scope, "mail");
+    }
+
+    #[test]
+    fn missing_resource_is_rejected_when_several_services_exist() {
+        let st = st_with(&["mail", "calendar"]);
+        let mut p = params(&client(&st));
+        p.resource = None;
+        assert!(matches!(
+            validate(&st, &p),
+            Err(Rejection::Redirect {
+                error: "invalid_target",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn each_service_resource_grants_its_own_scope() {
+        let st = st_with(&["mail", "calendar"]);
+        let mut p = params(&client(&st));
+        p.resource = Some("https://mail.example.com/calendar".into());
+        let v = validate(&st, &p).unwrap();
+        assert_eq!(v.scope, "calendar");
+        assert_eq!(v.resource, "https://mail.example.com/calendar");
     }
 
     #[test]
@@ -524,14 +564,24 @@ mod tests {
     fn wrong_resource_is_rejected_with_redirect() {
         let st = st();
         let mut p = params(&client(&st));
-        p.resource = Some("https://other.example.com/mcp".into());
-        assert!(matches!(
-            validate(&st, &p),
-            Err(Rejection::Redirect {
-                error: "invalid_target",
-                ..
-            })
-        ));
+        for wrong in [
+            "https://other.example.com/mail",
+            "https://mail.example.com/mcp",
+            "https://mail.example.com/calendar",
+            "https://mail.example.com/mail/",
+        ] {
+            p.resource = Some(wrong.into());
+            assert!(
+                matches!(
+                    validate(&st, &p),
+                    Err(Rejection::Redirect {
+                        error: "invalid_target",
+                        ..
+                    })
+                ),
+                "{wrong}"
+            );
+        }
     }
 
     fn xff(values: &[&str]) -> HeaderMap {

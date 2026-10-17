@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<multistatus xmlns="DAV:">
+<response xmlns="DAV:">
+    <href>/1234567890/calendars/home/0A1B2C3D-0000-4000-8000-00000000AAAA.ics</href>
+        <propstat>
+            <prop>
+                <getetag xmlns="DAV:">"mvcd0001"</getetag>
+                <calendar-data xmlns="urn:ietf:params:xml:ns:caldav"><![CDATA[BEGIN:VCALENDAR
+CALSCALE:GREGORIAN
+PRODID:-//Apple Inc.//macOS 26.1//EN
+VERSION:2.0
+BEGIN:VEVENT
+UID:0A1B2C3D-0000-4000-8000-00000000AAAA
+DTSTAMP:20261001T080000Z
+DTSTART;TZID=Europe/London:20261020T090000
+DTEND;TZID=Europe/London:20261020T100000
+SUMMARY:Dentist <check-up> & clean
+SEQUENCE:0
+END:VEVENT
+END:VCALENDAR
+]]></calendar-data>
+            </prop>
+            <status>HTTP/1.1 200 OK</status>
+        </propstat>
+</response>
+<response xmlns="DAV:">
+    <href>/1234567890/calendars/home/entity-escaped.ics</href>
+        <propstat>
+            <prop>
+                <getetag xmlns="DAV:">&quot;mvcd0002&quot;</getetag>
+                <C:calendar-data xmlns:C="urn:ietf:params:xml:ns:caldav">BEGIN:VCALENDAR&#13;
+VERSION:2.0&#13;
+PRODID:-//Example Corp//Example Calendar//EN&#13;
+BEGIN:VEVENT&#13;
+UID:entity-escaped&#13;
+DTSTAMP:20261001T080000Z&#13;
+DTSTART;VALUE=DATE:20261024&#13;
+DTEND;VALUE=DATE:20261025&#13;
+SUMMARY:Fish &amp; chips &lt;Friday&gt;&#13;
+END:VEVENT&#13;
+END:VCALENDAR&#13;
+</C:calendar-data>
+            </prop>
+            <status>HTTP/1.1 200 OK</status>
+        </propstat>
+</response>
+<response xmlns="DAV:">
+    <href>/1234567890/calendars/home/gone.ics</href>
+    <status>HTTP/1.1 404 Not Found</status>
+</response>
+</multistatus>

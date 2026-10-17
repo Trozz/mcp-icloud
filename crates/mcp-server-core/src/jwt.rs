@@ -73,16 +73,28 @@ impl Jwt {
         }
     }
 
+    /// Issues a token for the default audience (the authorization server itself).
     pub fn issue(
         &self,
         typ: TokenKind,
         ttl: Option<Duration>,
         payload: Payload,
     ) -> Result<String, JwtError> {
+        self.issue_for(typ, ttl, payload, &self.audience)
+    }
+
+    /// Issues a token whose `aud` is `audience`, e.g. an access token bound to one resource.
+    pub fn issue_for(
+        &self,
+        typ: TokenKind,
+        ttl: Option<Duration>,
+        payload: Payload,
+        audience: &str,
+    ) -> Result<String, JwtError> {
         let now = get_current_timestamp();
         let claims = Claims {
             iss: self.issuer.clone(),
-            aud: self.audience.clone(),
+            aud: audience.to_string(),
             sub: "owner".into(),
             typ,
             jti: uuid::Uuid::new_v4().to_string(),
@@ -93,9 +105,20 @@ impl Jwt {
         encode(&Header::new(Algorithm::HS256), &claims, &self.enc).map_err(|_| JwtError::Invalid)
     }
 
+    /// Verifies a token issued for the default audience.
     pub fn verify(&self, token: &str, typ: TokenKind) -> Result<Claims, JwtError> {
+        self.verify_for(token, typ, &self.audience)
+    }
+
+    /// Verifies a token and requires its `aud` to be exactly `audience`.
+    pub fn verify_for(
+        &self,
+        token: &str,
+        typ: TokenKind,
+        audience: &str,
+    ) -> Result<Claims, JwtError> {
         let mut v = Validation::new(Algorithm::HS256);
-        v.set_audience(&[&self.audience]);
+        v.set_audience(&[audience]);
         v.set_issuer(&[&self.issuer]);
         v.leeway = 5;
         if typ == TokenKind::Client {
@@ -230,6 +253,28 @@ mod tests {
             )
             .unwrap();
         assert!(jwt().verify(&t, TokenKind::Access).is_err());
+    }
+
+    #[test]
+    fn audience_bound_token_verifies_only_for_that_audience() {
+        let j = jwt();
+        let t = j
+            .issue_for(
+                TokenKind::Access,
+                Some(Duration::from_secs(60)),
+                Payload::default(),
+                "https://mail.example.com/mail",
+            )
+            .unwrap();
+        let c = j
+            .verify_for(&t, TokenKind::Access, "https://mail.example.com/mail")
+            .unwrap();
+        assert_eq!(c.aud, "https://mail.example.com/mail");
+        assert!(
+            j.verify_for(&t, TokenKind::Access, "https://mail.example.com/calendar")
+                .is_err()
+        );
+        assert!(j.verify(&t, TokenKind::Access).is_err());
     }
 
     #[test]

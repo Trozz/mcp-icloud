@@ -5,6 +5,7 @@ pub mod oauth;
 pub mod observability;
 pub mod pkce;
 pub mod server;
+pub mod service;
 pub mod tls;
 
 pub fn install_crypto_provider() {

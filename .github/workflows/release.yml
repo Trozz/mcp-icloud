@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/trozz/mcp-icloud-mail
+  IMAGE: ghcr.io/trozz/mcp-icloud
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -89,12 +89,13 @@ jobs:
           ### Docker
 
           \`\`\`bash
-          docker run -d --name mcp-icloud-mail -p 8443:8443 \\
+          docker run -d --name mcp-icloud -p 8443:8443 \\
             -e ICLOUD_EMAIL=you@icloud.com \\
             -e ICLOUD_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx \\
-            -e PUBLIC_URL=https://mail.example.com \\
+            -e PUBLIC_URL=https://icloud.example.com \\
             -e OAUTH_SIGNING_KEY="\$(openssl rand -hex 32)" \\
             -e OAUTH_ADMIN_PASSWORD=choose-a-long-password \\
+            -e CALENDAR_TIMEZONE=Europe/London \\
             -v /path/to/certs:/certs:ro \\
             -e TLS_CERT_PATH=/certs/fullchain.pem \\
             -e TLS_KEY_PATH=/certs/privkey.pem \\
@@ -103,19 +104,23 @@ jobs:
 
           ### Binary
 
-          Download the archive for your platform below, verify it with the matching \`.sha256\` file (\`shasum -a 256 -c <file>.sha256\`), extract it and run \`./mcp-icloud-mail\` with the same environment variables.
+          Download the archive for your platform below, verify it with the matching \`.sha256\` file (\`shasum -a 256 -c <file>.sha256\`), extract it and run \`./mcp-icloud\` with the same environment variables.
 
           ### Connect
 
-          - claude.ai: add a custom connector with the URL \`https://<your PUBLIC_URL host>/mcp\` and sign in with \`OAUTH_ADMIN_PASSWORD\`.
-          - Claude Code: \`claude mcp add --transport http icloud-mail https://<host>/mcp --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\`
+          Each service is its own MCP server at \`https://<your PUBLIC_URL host>/<service>\`: mail at \`/mail\`, calendar at \`/calendar\`. Set \`ICLOUD_SERVICES\` to run only some of them.
+
+          - claude.ai: add one custom connector per service (\`https://<your PUBLIC_URL host>/mail\`, \`https://<your PUBLIC_URL host>/calendar\`) and sign in with \`OAUTH_ADMIN_PASSWORD\`.
+          - Claude Code: \`claude mcp add --transport http icloud-mail https://<host>/mail --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\` and \`claude mcp add --transport http icloud-calendar https://<host>/calendar --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\`
+
+          Upgrading from mcp-icloud-mail: mail moved from \`/mcp\` to \`/mail\`; re-add the connector.
 
           Full configuration reference: https://github.com/${REPO}/blob/${TAG}/README.md
           EOF
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          name: mcp-icloud-mail ${{ needs.version.outputs.version }}
+          name: mcp-icloud ${{ needs.version.outputs.version }}
           body_path: NOTES.md
           target_commitish: ${{ github.sha }}
           draft: true
@@ -145,7 +150,7 @@ jobs:
             zig: false
     env:
       APP_VERSION: ${{ needs.version.outputs.version }}
-      ARCHIVE: mcp-icloud-mail-${{ needs.version.outputs.version }}-${{ matrix.target }}
+      ARCHIVE: mcp-icloud-${{ needs.version.outputs.version }}-${{ matrix.target }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -171,14 +176,14 @@ jobs:
       - name: Build
         run: |
           if [ "${{ matrix.zig }}" = "true" ]; then
-            cargo zigbuild --release --locked -p mcp-icloud-mail --target "${{ matrix.target }}"
+            cargo zigbuild --release --locked -p mcp-icloud --target "${{ matrix.target }}"
           else
-            cargo build --release --locked -p mcp-icloud-mail --target "${{ matrix.target }}"
+            cargo build --release --locked -p mcp-icloud --target "${{ matrix.target }}"
           fi
       - name: Package
         run: |
           mkdir -p "dist/${ARCHIVE}"
-          cp "target/${{ matrix.target }}/release/mcp-icloud-mail" README.md LICENSE "dist/${ARCHIVE}/"
+          cp "target/${{ matrix.target }}/release/mcp-icloud" README.md LICENSE "dist/${ARCHIVE}/"
           tar -C dist -czf "dist/${ARCHIVE}.tar.gz" "${ARCHIVE}"
           (cd dist && shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256")
       - uses: actions/attest-build-provenance@v4
