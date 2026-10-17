@@ -146,7 +146,7 @@ impl ContactsServer {
                 .remove_ids
                 .unwrap_or_default()
                 .iter()
-                .map(|i| i.trim().to_string())
+                .map(|i| member_uid(i).unwrap_or_else(|| i.trim().to_string()))
                 .collect();
             if let Some(id) = remove.iter().find(|id| !listed.contains(id)) {
                 return Err(ContactsError::invalid(format!(

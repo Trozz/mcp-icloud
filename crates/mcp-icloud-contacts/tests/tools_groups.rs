@@ -112,6 +112,21 @@ async fn update_group_renames_adds_and_removes_members() {
 }
 
 #[tokio::test]
+async fn update_group_accepts_urn_uuid_remove_ids() {
+    let fake = seeded().await;
+    server(&fake)
+        .update_group(params(json!({
+            "id": GROUP_UID,
+            "remove_ids": [format!("urn:uuid:{COMPANY_UID}")]
+        })))
+        .await
+        .unwrap();
+    let body = fake.state().card(GROUP_FILE).unwrap().body;
+    assert!(!body.contains(COMPANY_UID), "{body}");
+    assert!(body.contains(PERSON_UID), "{body}");
+}
+
+#[tokio::test]
 async fn update_group_refuses_bad_requests_before_writing() {
     let fake = seeded().await;
     let s = server(&fake);
