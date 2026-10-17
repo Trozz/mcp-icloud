@@ -1,8 +1,11 @@
 pub mod caldav;
 pub mod config;
 pub mod error;
+pub mod freebusy;
 pub mod ical;
+pub mod tools;
 pub mod tz;
+pub mod view;
 
 pub const VERSION: &str = match option_env!("APP_VERSION") {
     Some(v) => v,

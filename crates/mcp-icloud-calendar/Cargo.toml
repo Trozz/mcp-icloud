@@ -20,7 +20,10 @@ quick-xml.workspace = true
 reqwest.workspace = true
 metrics.workspace = true
 tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+rmcp.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-tokio.workspace = true
