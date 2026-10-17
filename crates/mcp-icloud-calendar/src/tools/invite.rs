@@ -1,7 +1,6 @@
 //! respond_to_invitation (registered only when ICLOUD_ALLOW_INVITES is on).
 
 use super::{CalendarServer, json_result, run};
-use crate::caldav::client::Precondition;
 use crate::caldav::discovery::Account;
 use crate::error::{self, CalError};
 use crate::ical::build::set_my_partstat;
@@ -10,6 +9,7 @@ use crate::ical::parse::master_mut;
 use crate::ical::recur::{find_occurrence, override_mut};
 use crate::view::{occurrence_in, occurrence_out};
 use chrono::Utc;
+use mcp_icloud_dav::client::Precondition;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;

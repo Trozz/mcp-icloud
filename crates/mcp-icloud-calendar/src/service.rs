@@ -1,8 +1,9 @@
-use crate::caldav::client::{CaldavClient, CaldavSettings};
+use crate::caldav::caldav_settings;
 use crate::caldav::discovery::Directory;
 use crate::config::CalendarConfig;
 use crate::tools::{CalendarServer, ToolSettings};
 use crate::tz::ZoneState;
+use mcp_icloud_dav::client::DavClient;
 use mcp_server_core::service::{Service, ServiceContext, ServiceEnv, mcp_service};
 use std::sync::Arc;
 
@@ -54,12 +55,12 @@ impl Service for CalendarService {
 /// Reads the calendar configuration and builds the service. Errors go to `env.errors`.
 pub fn from_env(env: &mut ServiceEnv) -> Option<Arc<dyn Service>> {
     let cfg = CalendarConfig::from_env(env)?;
-    let caldav = CaldavSettings::new(
+    let caldav = caldav_settings(
         cfg.caldav_url.clone(),
         cfg.email.clone(),
         cfg.app_password.clone(),
     );
-    let client = match CaldavClient::new(caldav) {
+    let client = match DavClient::new(caldav) {
         Ok(c) => Arc::new(c),
         Err(e) => {
             env.errors.push(format!("CalDAV client setup failed: {e}"));

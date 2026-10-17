@@ -1,9 +1,10 @@
 //! Runs discovery, a listing and a write with every log level enabled (and request/response
 //! bodies logged) and checks that neither the app password nor the Basic auth header appears.
 mod support;
-use mcp_icloud_calendar::caldav::client::{CaldavClient, CaldavSettings};
+use mcp_icloud_calendar::caldav::caldav_settings;
 use mcp_icloud_calendar::caldav::discovery::Directory;
 use mcp_icloud_calendar::tools::CalendarServer;
+use mcp_icloud_dav::client::DavClient;
 use secrecy::SecretString;
 use serde_json::json;
 use std::io::Write;
@@ -36,11 +37,10 @@ async fn credentials_never_reach_the_logs() {
     let _default = tracing::subscriber::set_default(subscriber);
 
     let fake = FakeCalDav::start(FakeState::icloud_like()).await;
-    let mut caldav =
-        CaldavSettings::new(fake.url.clone(), EMAIL.into(), SecretString::from(PASSWORD));
+    let mut caldav = caldav_settings(fake.url.clone(), EMAIL.into(), SecretString::from(PASSWORD));
     caldav.log_bodies = true;
     let dir = Arc::new(Directory::new(
-        Arc::new(CaldavClient::new(caldav).unwrap()),
+        Arc::new(DavClient::new(caldav).unwrap()),
         EMAIL.into(),
     ));
     let server = CalendarServer::new(dir, settings(false));

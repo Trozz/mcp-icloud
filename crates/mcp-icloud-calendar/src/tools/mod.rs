@@ -251,7 +251,12 @@ impl CalendarServer {
         cal: CalendarInfo,
         body: String,
     ) -> error::Result<(CalendarInfo, Vec<DavResponse>)> {
-        let r = self.dir.client().report(&cal.url, body).await;
+        let r = self
+            .dir
+            .client()
+            .report(&cal.url, body)
+            .await
+            .map_err(CalError::from);
         if let Err(CalError::NotFound(_)) = &r {
             self.dir.invalidate().await;
         }

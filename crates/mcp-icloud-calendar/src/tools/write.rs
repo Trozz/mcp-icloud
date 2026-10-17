@@ -1,7 +1,6 @@
 //! create_event, update_event and delete_event.
 
 use super::{CalendarServer, json_result, run};
-use crate::caldav::client::Precondition;
 use crate::caldav::discovery::{Account, CalendarInfo};
 use crate::error::{self, CalError};
 use crate::ical::build::{
@@ -17,6 +16,7 @@ use crate::tz::parse_date;
 use crate::view::{event_fields, occurrence_in, occurrence_out, until_in, zoned};
 use chrono::{Duration, Utc};
 use chrono_tz::Tz;
+use mcp_icloud_dav::client::Precondition;
 use mcp_icloud_dav::line::Component;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -514,7 +514,7 @@ impl CalendarServer {
                     if let Some(tag) = new_etag {
                         let _ = client.delete(&new_url, &tag).await;
                     }
-                    return Err(err);
+                    return Err(err.into());
                 }
                 out.insert("new_event_id".into(), json!(Account::event_id(&new_url)));
                 out.insert(

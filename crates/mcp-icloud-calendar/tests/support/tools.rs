@@ -1,8 +1,9 @@
 use super::fake_caldav::{EMAIL, FakeCalDav, PASSWORD};
-use mcp_icloud_calendar::caldav::client::{CaldavClient, CaldavSettings};
+use mcp_icloud_calendar::caldav::caldav_settings;
 use mcp_icloud_calendar::caldav::discovery::Directory;
 use mcp_icloud_calendar::tools::{CalendarServer, ToolSettings};
 use mcp_icloud_calendar::tz::ZoneState;
+use mcp_icloud_dav::client::DavClient;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use secrecy::SecretString;
@@ -10,7 +11,7 @@ use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
 pub fn directory(fake: &FakeCalDav) -> Arc<Directory> {
-    let client = CaldavClient::new(CaldavSettings::new(
+    let client = DavClient::new(caldav_settings(
         fake.url.clone(),
         EMAIL.into(),
         SecretString::from(PASSWORD),

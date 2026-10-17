@@ -1,10 +1,11 @@
 //! Principal -> calendar home -> calendars, cached in memory, plus `event_id` validation.
 
-use crate::caldav::client::CaldavClient;
-use crate::caldav::xml::{propfind_calendars, propfind_home};
+use crate::caldav::xml::propfind_calendars;
 use crate::error::{CalError, Result};
 use crate::ical::model::MyAddresses;
-use mcp_icloud_dav::xml::{CALDAV, DavResponse, propfind_principal};
+use mcp_icloud_dav::client::DavClient;
+use mcp_icloud_dav::discovery::{HomeSet, discover_home, join};
+use mcp_icloud_dav::xml::{CALDAV, DavResponse};
 use std::sync::Arc;
 use url::Url;
 
@@ -49,11 +50,6 @@ fn last_segment(path: &str) -> String {
         .next()
         .unwrap_or_default()
         .to_string()
-}
-
-fn join(base: &Url, href: &str) -> Result<Url> {
-    base.join(href)
-        .map_err(|e| CalError::Upstream(format!("invalid href {href:?} from the server: {e}")))
 }
 
 /// Raw input checks shared by calendar ids and event ids: no dot segments (they would be
@@ -164,35 +160,20 @@ impl Account {
                 }
             })
             .collect();
-        join(&cal.url, &format!("{safe}.ics"))
+        Ok(join(&cal.url, &format!("{safe}.ics"))?)
     }
 }
 
 /// Runs discovery from the client's base URL. `email` (the login) is always treated as mine.
-pub async fn discover(client: &CaldavClient, email: &str) -> Result<Account> {
-    let base = client.base().clone();
-    let (answered, principal) = client.propfind(&base, 0, propfind_principal()).await?;
-    let href = principal
-        .iter()
-        .find_map(|r| r.props.current_user_principal.clone())
-        .ok_or_else(|| CalError::Upstream("the server did not name a principal".into()))?;
-    let principal_url = join(&answered, &href)?;
-
-    let (answered, home) = client.propfind(&principal_url, 0, propfind_home()).await?;
-    let props = home
-        .iter()
-        .find(|r| r.props.calendar_home_set.is_some())
-        .map(|r| r.props.clone())
-        .ok_or_else(|| CalError::Upstream("the server did not name a calendar home".into()))?;
-    let home_url = join(
-        &answered,
-        props.calendar_home_set.as_deref().unwrap_or_default(),
-    )?;
-    let mut addresses = props.address_set.clone();
+pub async fn discover(client: &DavClient, email: &str) -> Result<Account> {
+    let found = discover_home(client, HomeSet::Calendar).await?;
+    let mut addresses = found.principal_props.address_set.clone();
     addresses.push(format!("mailto:{email}"));
     let me = MyAddresses::new(addresses);
 
-    let (home_url, listing) = client.propfind(&home_url, 1, propfind_calendars()).await?;
+    let (home_url, listing) = client
+        .propfind(&found.home, 1, propfind_calendars())
+        .await?;
     let mut calendars = Vec::new();
     for r in listing.iter().filter(|r| is_event_calendar(r)) {
         let url = join(&home_url, &r.href)?;
@@ -221,13 +202,13 @@ pub async fn discover(client: &CaldavClient, email: &str) -> Result<Account> {
 /// Discovery results shared by all sessions. The first caller runs discovery; later callers
 /// reuse it until `refresh` or `invalidate`.
 pub struct Directory {
-    client: Arc<CaldavClient>,
+    client: Arc<DavClient>,
     email: String,
     cached: tokio::sync::Mutex<Option<Arc<Account>>>,
 }
 
 impl Directory {
-    pub fn new(client: Arc<CaldavClient>, email: String) -> Self {
+    pub fn new(client: Arc<DavClient>, email: String) -> Self {
         Directory {
             client,
             email,
@@ -235,7 +216,7 @@ impl Directory {
         }
     }
 
-    pub fn client(&self) -> &CaldavClient {
+    pub fn client(&self) -> &DavClient {
         &self.client
     }
 

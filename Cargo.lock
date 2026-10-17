@@ -1687,8 +1687,16 @@ dependencies = [
 name = "mcp-icloud-dav"
 version = "0.0.0-dev"
 dependencies = [
+ "axum",
+ "mcp-server-core",
+ "metrics",
  "quick-xml",
+ "reqwest",
+ "secrecy",
  "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

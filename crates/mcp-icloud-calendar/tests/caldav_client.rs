@@ -4,7 +4,8 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use mcp_icloud_calendar::caldav::client::{CaldavClient, CaldavSettings, Precondition};
+use mcp_icloud_calendar::caldav::caldav_settings;
+use mcp_icloud_dav::client::{DavClient, Precondition};
 use secrecy::SecretString;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -104,8 +105,8 @@ async fn handle(
     res
 }
 
-fn client(base: &Url) -> CaldavClient {
-    CaldavClient::new(CaldavSettings::new(
+fn client(base: &Url) -> DavClient {
+    DavClient::new(caldav_settings(
         base.clone(),
         "user@example.com".into(),
         SecretString::from("app-pass"),
@@ -240,13 +241,13 @@ async fn reads_retry_once_on_timeouts() {
     let mut fast = reply(200, "BEGIN:VCALENDAR");
     fast.headers.push(("etag", "\"e2\"".into()));
     s.push(fast);
-    let mut settings = CaldavSettings::new(
+    let mut settings = caldav_settings(
         s.url.clone(),
         "user@example.com".into(),
         SecretString::from("app-pass"),
     );
     settings.request_timeout = Duration::from_millis(300);
-    let c = CaldavClient::new(settings).unwrap();
+    let c = DavClient::new(settings).unwrap();
     let got = c.get(&s.at("/cal/a.ics")).await.unwrap();
     assert_eq!(got.body, "BEGIN:VCALENDAR");
     assert_eq!(got.etag.as_deref(), Some("\"e2\""));

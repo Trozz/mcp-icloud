@@ -6,12 +6,6 @@ use mcp_icloud_dav::xml::{APPLE, CALDAV, CALSERVER};
 
 const HEAD: &str = r#"<?xml version="1.0" encoding="utf-8"?>"#;
 
-pub fn propfind_home() -> String {
-    format!(
-        r#"{HEAD}<d:propfind xmlns:d="DAV:" xmlns:c="{CALDAV}"><d:prop><c:calendar-home-set/><c:calendar-user-address-set/></d:prop></d:propfind>"#
-    )
-}
-
 pub fn propfind_calendars() -> String {
     format!(
         r#"{HEAD}<d:propfind xmlns:d="DAV:" xmlns:c="{CALDAV}" xmlns:cs="{CALSERVER}" xmlns:a="{APPLE}"><d:prop><d:resourcetype/><d:displayname/><a:calendar-color/><c:supported-calendar-component-set/><d:current-user-privilege-set/><cs:getctag/></d:prop></d:propfind>"#
@@ -46,7 +40,6 @@ mod tests {
     fn request_bodies_are_well_formed_and_namespaced() {
         for body in [
             propfind_principal(),
-            propfind_home(),
             propfind_calendars(),
             calendar_query(
                 Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap(),
