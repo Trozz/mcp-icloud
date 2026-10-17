@@ -1,11 +1,12 @@
 # mcp-icloud
 
-A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server for iCloud. One server exposes each iCloud service as its own MCP endpoint, so MCP clients such as claude.ai, Claude Desktop and Claude Code can work with your mail and calendars.
+A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server for iCloud. One server exposes each iCloud service as its own MCP endpoint, so MCP clients such as claude.ai, Claude Desktop and Claude Code can work with your mail, calendars and contacts.
 
 | Service | Path | What it does |
 |---|---|---|
 | Mail | `/mail` | Search, read, organise and draft email; optionally send |
 | Calendar | `/calendar` | List, search, create, edit and delete events, including recurring ones; find free time; optionally manage invitations |
+| Contacts | `/contacts` | Search, read, create, edit and delete contacts; manage groups (iOS Lists) |
 
 - Single static Rust binary, shipped as a `FROM scratch` container image.
 - TLS end to end: the server terminates TLS itself, and every connection to Apple is verified.
@@ -21,8 +22,9 @@ iCloud has no public API for these services. The server talks to Apple over stan
 | Reading and organising mail | IMAP | `imap.mail.me.com:993` |
 | Sending mail | SMTP, STARTTLS | `smtp.mail.me.com:587` |
 | Calendars | CalDAV | `caldav.icloud.com` (then your account's partition host, for example `p99-caldav.icloud.com`) |
+| Contacts | CardDAV | `contacts.icloud.com` (then your account's partition host, for example `p99-contacts.icloud.com`) |
 
-MCP clients reach each service over HTTPS at its path (`https://<host>/mail`, `https://<host>/calendar`). They authenticate with an OAuth access token (claude.ai) or a static bearer token (Claude Code and other clients that can send a header). Your Apple password never leaves the server.
+MCP clients reach each service over HTTPS at its path (`https://<host>/mail`, `https://<host>/calendar`, `https://<host>/contacts`). They authenticate with an OAuth access token (claude.ai) or a static bearer token (Claude Code and other clients that can send a header). Your Apple password never leaves the server.
 
 `ICLOUD_SERVICES` chooses which services run (default: all). A service that is not enabled is not mounted and does not read its configuration.
 
@@ -73,6 +75,24 @@ With `ICLOUD_ALLOW_INVITES=false` (default) attendees are always shown and prese
 
 Reminders are not available: Apple no longer exposes upgraded iCloud Reminders over CalDAV.
 
+## Contacts tools (`/contacts`)
+
+| Tool | What it does |
+|---|---|
+| `search_contacts` | Find contacts by name, nickname, organization, department, job title, email or related name (every word must match; case and accents are ignored), or by a phone number in any format (`07700 900123` finds `+44 7700 900123`). Without a query it lists everyone; `group_id` limits it to one group. Paged with `limit` (default 25, at most 100) and `offset` |
+| `get_contact` | Everything about one contact: names, organization, emails, phones, addresses, URLs, birthday, dates, related names, social profiles, instant messaging, note and groups |
+| `get_my_contact` | Your own card (My Card) |
+| `list_groups` | Groups (iOS Lists) with their member counts |
+| `create_contact`, `update_contact` | Create a contact, or change only the fields you pass (`""` clears one). A list you pass (`emails`, `phones`, `urls`, `addresses`, `dates`, `related`) replaces that whole list; entries you pass back unchanged keep their exact lines |
+| `delete_contact` | Delete a contact and remove it from its groups. Your own card cannot be deleted |
+| `create_group`, `update_group`, `delete_group` | Create, rename, add or remove members of, or delete a group. Deleting a group keeps its contacts |
+
+Contacts and groups are addressed by `id`, as `search_contacts` and `list_groups` return it. Labels are plain words: `home`, `work`, `other`, `mobile`, `iPhone`, `main`, `pager`, `home fax`, `work fax`, `home page`, `anniversary`, relations such as `mother` or `friend`, or any custom text. Birthdays and dates are `YYYY-MM-DD`, or `--MM-DD` without a year.
+
+Edits are lossless: only the lines a change touches are rewritten, so photos, Apple's own fields and anything the server does not show survive every edit. Updates are conditional writes: if a contact changed in iCloud since it was read, the tool returns a `conflict` error instead of overwriting it.
+
+iCloud does not enforce `If-Match` on contact deletes, so deletes cannot be made conditional: the server re-reads the address book at the start of every call and deletes immediately after, so only a change made on another device in those milliseconds could be lost.
+
 ## Quick start
 
 ### 1. Create an app-specific password
@@ -81,7 +101,7 @@ Reminders are not available: Apple no longer exposes upgraded iCloud Reminders o
 2. Open **Sign-In and Security**, then **App-Specific Passwords**.
 3. Create one named `mcp-icloud` and copy it (format `xxxx-xxxx-xxxx-xxxx`).
 
-Two-factor authentication must be enabled on the Apple account. The same password is used for mail and calendar.
+Two-factor authentication must be enabled on the Apple account. The same password is used for mail, calendar and contacts.
 
 ### 2. Run with Docker
 
@@ -99,7 +119,7 @@ docker run -d --name mcp-icloud -p 8443:8443 \
   ghcr.io/trozz/mcp-icloud:latest
 ```
 
-Add `-e ICLOUD_SERVICES=mail` (or `calendar`) to run only one service. Keep `OAUTH_SIGNING_KEY` stable: changing it signs everyone out. Store it in a secret, not in shell history.
+Add `-e ICLOUD_SERVICES=mail` (or `calendar`, `contacts`, or a comma separated list) to run only some services. Keep `OAUTH_SIGNING_KEY` stable: changing it signs everyone out. Store it in a secret, not in shell history.
 
 ### 3. Or run the binary
 
@@ -121,7 +141,7 @@ Each service is a separate MCP server, so add one connector per service you want
 ### claude.ai, Claude Desktop and Claude mobile (remote connector)
 
 1. In claude.ai open **Settings**, then **Connectors**, then **Add custom connector**.
-2. Enter `https://<your PUBLIC_URL host>/mail` (or `/calendar`).
+2. Enter `https://<your PUBLIC_URL host>/mail` (or `/calendar`, `/contacts`).
 3. A login page from this server opens, naming the service. Enter `OAUTH_ADMIN_PASSWORD`.
 
 claude.ai connects from Anthropic's servers, so the server must be reachable from the internet with a **publicly trusted** certificate (directly through `TLS_CERT_PATH`/`TLS_KEY_PATH`, or at a reverse proxy or tunnel in front of it).
@@ -135,6 +155,8 @@ claude mcp add --transport http icloud-mail https://icloud.example.com/mail \
   --header "Authorization: Bearer $MCP_AUTH_TOKEN"
 claude mcp add --transport http icloud-calendar https://icloud.example.com/calendar \
   --header "Authorization: Bearer $MCP_AUTH_TOKEN"
+claude mcp add --transport http icloud-contacts https://icloud.example.com/contacts \
+  --header "Authorization: Bearer $MCP_AUTH_TOKEN"
 ```
 
 ## Configuration
@@ -145,7 +167,7 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `ICLOUD_SERVICES` | no | all (`mail,calendar`) | Comma separated services to run. An unknown name or an empty list stops startup |
+| `ICLOUD_SERVICES` | no | all (`mail,calendar,contacts`) | Comma separated services to run. An unknown name or an empty list stops startup |
 | `PUBLIC_URL` | yes | | External base URL, for example `https://icloud.example.com`. `http` is accepted only for `localhost` |
 | `OAUTH_SIGNING_KEY` | yes | | At least 32 bytes. Rotating it revokes every client and token |
 | `OAUTH_ADMIN_PASSWORD` | yes | | Password for the OAuth login page, at least 12 characters |
@@ -158,11 +180,11 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 | `LOG_LEVEL` | no | `info` | Log filter, for example `info,mcp_icloud_mail::imap=debug` or `info,mcp_icloud_calendar=debug` |
 | `LOG_FORMAT` | no | `json` | `json` or `pretty` |
 | `DEBUG` | no | off | Debug logging with content redacted. Never logs IMAP protocol lines or credentials |
-| `DEBUG_UNSAFE_LOG_CONTENT` | no | off | Also logs full tool results and CalDAV bodies, including message and event content. Credentials are never logged |
+| `DEBUG_UNSAFE_LOG_CONTENT` | no | off | Also logs full tool results and CalDAV and CardDAV bodies, including message, event and contact content. Credentials are never logged |
 | `METRICS_ADDR` | no | | Enables a Prometheus listener, for example `0.0.0.0:9090` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | | Enables OpenTelemetry trace export over OTLP/HTTP |
 
-### Shared by mail and calendar
+### Shared by mail, calendar and contacts
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -187,6 +209,12 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 | `CALENDAR_TIMEZONE` | no | `Europe/London` | IANA time zone used when no override is set. An invalid name stops startup |
 | `ICLOUD_ALLOW_INVITES` | no | `false` | Enables attendee changes and `respond_to_invitation` |
 | `CALDAV_URL` | no | `https://caldav.icloud.com` | CalDAV entry point. Must be `https`, except a loopback address for testing |
+
+### Contacts
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `CARDDAV_URL` | no | `https://contacts.icloud.com` | CardDAV entry point. Must be `https`, except a loopback address for testing |
 
 ## TLS
 
@@ -219,10 +247,10 @@ Add `cert.pem` to the trust store of the machine running the client (or to `NODE
 
 ## Observability
 
-- Logs go to stdout as JSON by default. Every tool call, OAuth request and IMAP, SMTP and CalDAV request is a span with name, outcome and duration.
-- `DEBUG=1` adds tool arguments, result sizes, IMAP/SMTP command labels and CalDAV method, path and status. IMAP protocol lines, message and event bodies, passwords, tokens and the `Authorization` header are never logged.
-- `DEBUG_UNSAFE_LOG_CONTENT=1` **writes your email and calendar content into the logs**. The server prints a warning at startup. Use it only briefly while debugging.
-- `METRICS_ADDR` starts a separate Prometheus listener (plain HTTP, keep it on an internal network): `mcp_tool_calls_total`, `mcp_tool_duration_seconds`, `imap_commands_total`, `imap_command_duration_seconds`, `imap_reconnects_total`, `smtp_sends_total`, `caldav_requests_total`, `caldav_request_duration_seconds`, `oauth_requests_total`, `oauth_login_failures_total`, `message_cache_hits_total`, `message_cache_misses_total`, `http_requests_total`.
+- Logs go to stdout as JSON by default. Every tool call, OAuth request and IMAP, SMTP, CalDAV and CardDAV request is a span with name, outcome and duration.
+- `DEBUG=1` adds tool arguments, result sizes, IMAP/SMTP command labels and CalDAV and CardDAV method, path and status. IMAP protocol lines, message, event and contact bodies, passwords, tokens and the `Authorization` header are never logged; contacts tools log contact ids only, never names, numbers or addresses.
+- `DEBUG_UNSAFE_LOG_CONTENT=1` **writes your email, calendar and contact content into the logs**. The server prints a warning at startup. Use it only briefly while debugging.
+- `METRICS_ADDR` starts a separate Prometheus listener (plain HTTP, keep it on an internal network): `mcp_tool_calls_total`, `mcp_tool_duration_seconds`, `imap_commands_total`, `imap_command_duration_seconds`, `imap_reconnects_total`, `smtp_sends_total`, `caldav_requests_total`, `caldav_request_duration_seconds`, `carddav_requests_total`, `carddav_request_duration_seconds`, `oauth_requests_total`, `oauth_login_failures_total`, `message_cache_hits_total`, `message_cache_misses_total`, `http_requests_total`.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` (with the standard `OTEL_EXPORTER_OTLP_HEADERS`) exports traces over OTLP/HTTP. Nothing is exported unless it is set.
 
 ## Security notes
@@ -232,7 +260,7 @@ Add `cert.pem` to the trust store of the machine running the client (or to `NODE
 - The OAuth login is limited to 5 failed attempts per minute per client, plus 30 failures per minute globally. Trade-off: an attacker who keeps failing can lock the legitimate owner out of login for up to a minute, and the global ceiling can do so regardless of client address.
 - Client address is the TCP peer. Behind a reverse proxy, set `TRUSTED_PROXIES` to the proxy IPs so the right-most untrusted `X-Forwarded-For` entry is used; otherwise every request shares the proxy IP and the per-client limit is effectively global.
 - Access tokens last 1 hour, refresh tokens 30 days. There is no per-client revocation: rotate `OAUTH_SIGNING_KEY` to sign every client out.
-- Calendar requests send your credentials only to `https` hosts under `icloud.com` (or the exact `CALDAV_URL` host when overridden); redirects elsewhere are refused.
+- Calendar and contacts requests send your credentials only to `https` hosts under `icloud.com` (or the exact `CALDAV_URL` or `CARDDAV_URL` host when overridden); redirects elsewhere are refused.
 - The container runs as UID 65532 with nothing else in the image.
 
 ## Development
@@ -250,9 +278,10 @@ Live smoke tests against your real account are ignored by default:
 ```bash
 ICLOUD_EMAIL=... ICLOUD_APP_PASSWORD=... cargo test -p mcp-icloud-mail --test live_icloud -- --ignored --nocapture
 ICLOUD_EMAIL=... ICLOUD_APP_PASSWORD=... cargo test -p mcp-icloud-calendar --test live_icloud -- --ignored --nocapture --test-threads=1
+ICLOUD_EMAIL=... ICLOUD_APP_PASSWORD=... cargo test -p mcp-icloud-contacts --test live_icloud -- --ignored --nocapture --test-threads=1
 ```
 
-The calendar round trip creates one clearly named event in December 2030 and always deletes it. The invitation test runs only when `ICLOUD_TEST_ATTENDEE` names an address you control.
+The calendar round trip creates one clearly named event in December 2030 and always deletes it. The contacts round trip creates a contact `ZZ MCP Probe` and a group `ZZ MCP Probe Group` with made-up data and always deletes both. The invitation test runs only when `ICLOUD_TEST_ATTENDEE` names an address you control.
 
 ### Adding a service
 
@@ -301,7 +330,7 @@ This project was called `mcp-icloud-mail` and served only mail at `/mcp`.
 - The repository is now `Trozz/mcp-icloud` (old URLs redirect), the image `ghcr.io/trozz/mcp-icloud`, the binary `mcp-icloud`, and release tags `vX.Y.Z` (the old `mail-v*` tags remain as history).
 - Mail moved from `/mcp` to `/mail`. Remove the old connector and add `https://<host>/mail`; `/mcp` now returns 404.
 - OAuth clients and tokens issued by the old server are no longer valid, so each connector signs in once more. `OAUTH_SIGNING_KEY`, `OAUTH_ADMIN_PASSWORD` and `MCP_AUTH_TOKEN` keep working unchanged.
-- Calendar runs by default; set `ICLOUD_SERVICES=mail` to keep the previous behaviour.
+- Calendar and contacts run by default; set `ICLOUD_SERVICES=mail` to keep the previous behaviour.
 
 ## License
 
