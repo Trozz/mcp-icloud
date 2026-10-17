@@ -1,8 +1,8 @@
 //! Thin CalDAV-over-HTTP client: Basic auth scoped to trusted origins, manual redirects,
 //! timeouts, one retry for safe methods, status mapping and metrics.
 
-use crate::caldav::xml::{DavResponse, parse_multistatus};
 use crate::error::{CalError, Result};
+use mcp_icloud_dav::xml::{DavResponse, parse_multistatus};
 use mcp_server_core::observability::content_logging_enabled;
 use reqwest::header::{CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, LOCATION};
 use reqwest::{Method, StatusCode};
@@ -154,7 +154,7 @@ impl CaldavClient {
         let mut headers = HeaderMap::new();
         headers.insert("Depth", HeaderValue::from_static("1"));
         let raw = self.send(method, url, headers, Some(body), true).await?;
-        parse_multistatus(&raw.body)
+        Ok(parse_multistatus(&raw.body)?)
     }
 
     pub async fn get(&self, url: &Url) -> Result<Fetched> {

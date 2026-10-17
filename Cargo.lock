@@ -1687,6 +1687,7 @@ dependencies = [
 name = "mcp-icloud-dav"
 version = "0.0.0-dev"
 dependencies = [
+ "quick-xml",
  "thiserror 2.0.21",
 ]
 

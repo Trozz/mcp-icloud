@@ -1,11 +1,10 @@
 //! Principal -> calendar home -> calendars, cached in memory, plus `event_id` validation.
 
 use crate::caldav::client::CaldavClient;
-use crate::caldav::xml::{
-    CALDAV, DavResponse, propfind_calendars, propfind_home, propfind_principal,
-};
+use crate::caldav::xml::{propfind_calendars, propfind_home};
 use crate::error::{CalError, Result};
 use crate::ical::model::MyAddresses;
+use mcp_icloud_dav::xml::{CALDAV, DavResponse, propfind_principal};
 use std::sync::Arc;
 use url::Url;
 
@@ -263,7 +262,7 @@ impl Directory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::caldav::xml::parse_multistatus;
+    use mcp_icloud_dav::xml::parse_multistatus;
 
     const CALENDARS: &str = include_str!("../../tests/fixtures/caldav-calendars.xml");
 
