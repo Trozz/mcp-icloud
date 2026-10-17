@@ -1,0 +1,13 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Apple Inc.//macOS 26.1//EN
+N:;;;;
+FN:Example Plumbing Co
+ORG:Example Plumbing Co;
+X-ABShowAs:COMPANY
+TEL;type=WORK;type=VOICE;type=pref:+44 7700 900789
+item1.URL:https://example.net
+item1.X-ABLabel:_$!<HomePage>!$_
+REV:2025-01-02T03:04:05Z
+UID:0A1B2C3D-0000-4000-8000-00000000C0DE
+END:VCARD
