@@ -53,15 +53,19 @@ impl Property {
     /// A property from one unfolded content line, kept exactly as written (name case, parameter
     /// order, case and repetition such as `type=CELL;type=VOICE;type=pref`, and the raw value).
     /// It is written folded at 75 octets on UTF-8 boundaries by the same rule as every edited
-    /// property. A line without a name or `:`, with a parameter missing `=`, or containing a line
-    /// break is an upstream error, like other parse errors.
+    /// property. A line without a name or `:`, with a parameter missing `=`, containing a line
+    /// break, with a name that is not `[group.]name` of letters, digits and `-`, or naming
+    /// `BEGIN`/`END` is an upstream error, like other parse errors.
     pub fn parse_line(line: &str) -> Result<Self> {
         if line.contains(['\r', '\n']) {
-            return Err(DavError::Upstream(format!(
-                "invalid content line: {line:?}"
-            )));
+            return Err(invalid_line());
         }
-        Self::parse_folded(line, fold_lines(line))
+        let prop = Self::parse_folded(line, fold_lines(line))?;
+        let written = prop.written.as_deref().unwrap_or(&prop.name);
+        if !is_name(written) || matches!(prop.base_name(), "BEGIN" | "END") {
+            return Err(invalid_line());
+        }
+        Ok(prop)
     }
 
     pub fn with_param(mut self, name: &str, value: impl Into<String>) -> Self {
@@ -117,11 +121,21 @@ impl Property {
             .find(|p| p.name.eq_ignore_ascii_case(name))
         {
             Some(p) => p.values = vec![value],
-            None => self.params.push(Param {
-                name: name.to_ascii_uppercase(),
-                values: vec![value],
-            }),
+            None => {
+                self.params.push(Param {
+                    name: name.to_ascii_uppercase(),
+                    values: vec![value],
+                });
+                return;
+            }
         }
+        let mut seen = false;
+        self.params.retain(|p| {
+            if !p.name.eq_ignore_ascii_case(name) {
+                return true;
+            }
+            !std::mem::replace(&mut seen, true)
+        });
     }
 
     pub fn remove_param(&mut self, name: &str) {
@@ -169,7 +183,7 @@ impl Property {
     }
 
     fn parse_folded(line: &str, physical: Vec<String>) -> Result<Self> {
-        let invalid = || DavError::Upstream(format!("invalid content line: {line:?}"));
+        let invalid = invalid_line;
         let name_end = line.find([';', ':']).ok_or_else(invalid)?;
         let name = &line[..name_end];
         if name.is_empty() {
@@ -178,7 +192,10 @@ impl Property {
         let mut params = Vec::new();
         let mut rest = &line[name_end..];
         while let Some(after) = rest.strip_prefix(';') {
-            let eq = after.find('=').ok_or_else(invalid)?;
+            let eq = after.find(['=', ';', ':']).ok_or_else(invalid)?;
+            if !after[eq..].starts_with('=') {
+                return Err(invalid());
+            }
             let pname = &after[..eq];
             let mut values = Vec::new();
             let mut s = &after[eq + 1..];
@@ -227,6 +244,20 @@ fn quote_param(v: &str) -> String {
     clean
 }
 
+/// Parse errors never quote the line: card and event text must not reach logs or tool results.
+fn invalid_line() -> DavError {
+    DavError::Upstream("invalid content line".into())
+}
+
+/// `[group.]name`, each part of ASCII letters, digits and `-`.
+fn is_name(name: &str) -> bool {
+    let part = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    match name.split_once('.') {
+        Some((group, base)) => part(group) && part(base),
+        None => part(name),
+    }
+}
+
 fn invalid_data(detail: impl std::fmt::Display) -> DavError {
     DavError::Upstream(format!("invalid data: {detail}"))
 }
@@ -251,7 +282,8 @@ impl Component {
     pub fn parse(text: &str) -> Result<Self> {
         let mut stack: Vec<Component> = Vec::new();
         let mut done: Option<Component> = None;
-        for (line, physical) in unfold_physical(text) {
+        for (n, (line, physical)) in unfold_physical(text).into_iter().enumerate() {
+            let n = n + 1;
             if line.is_empty() {
                 continue;
             }
@@ -260,15 +292,19 @@ impl Component {
                     "content after the end of the top-level component",
                 ));
             }
-            let prop = Property::parse_folded(&line, physical)?;
+            let prop = Property::parse_folded(&line, physical)
+                .map_err(|_| invalid_data(format!("unreadable content line {n}")))?;
             match prop.name.as_str() {
                 "BEGIN" => stack.push(Component::new(prop.value.trim())),
                 "END" => {
-                    let comp = stack
-                        .pop()
-                        .ok_or_else(|| invalid_data(format!("unexpected {line:?}")))?;
+                    let comp = stack.pop().ok_or_else(|| {
+                        invalid_data(format!("unexpected END on content line {n}"))
+                    })?;
                     if !comp.name.eq_ignore_ascii_case(prop.value.trim()) {
-                        return Err(invalid_data(format!("{line:?} closes {}", comp.name)));
+                        return Err(invalid_data(format!(
+                            "END on content line {n} does not close {}",
+                            comp.name
+                        )));
                     }
                     match stack.last_mut() {
                         Some(parent) => parent.components.push(comp),
@@ -277,7 +313,11 @@ impl Component {
                 }
                 _ => match stack.last_mut() {
                     Some(c) => c.properties.push(prop),
-                    None => return Err(invalid_data(format!("{line:?} outside a component"))),
+                    None => {
+                        return Err(invalid_data(format!(
+                            "content line {n} is outside a component"
+                        )));
+                    }
                 },
             }
         }
@@ -659,10 +699,65 @@ mod tests {
             "NOTE;type:x",
             "NOTE:a\r\nb",
             "NOTE:a\nb",
+            " NOTE:x",
+            "\tNOTE:x",
+            "END:VCARD",
+            "begin:VCARD",
+            "item1.END:VCARD",
+            "NOTE;type:x=y:z",
+            "NO TE:x",
+            "item1.:x",
+            ".NOTE:x",
+            "a.b.NOTE:x",
         ] {
             let e = Property::parse_line(bad).unwrap_err();
             assert!(matches!(e, DavError::Upstream(_)), "{bad:?}: {e:?}");
         }
+    }
+
+    #[test]
+    fn parse_errors_never_quote_the_content() {
+        let secret = "SENTINEL-SECRET";
+        for bad in [
+            format!("{secret} no colon"),
+            format!("NOTE;{secret}:x"),
+            format!(" NOTE:{secret}"),
+        ] {
+            let e = Property::parse_line(&bad).unwrap_err();
+            assert!(!e.to_string().contains(secret), "{e}");
+        }
+        for bad in [
+            format!("BEGIN:VCARD\n{secret} no colon\nEND:VCARD\n"),
+            format!("BEGIN:VCARD\nEND:{secret}\n"),
+            format!("NOTE:{secret}\n"),
+            format!("END:{secret}\n"),
+        ] {
+            let e = Component::parse(&bad).unwrap_err();
+            assert!(!e.to_string().contains(secret), "{e}");
+        }
+        let e = Component::parse("BEGIN:VCARD\nFN:x\nbad line\nEND:VCARD\n").unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "iCloud error: invalid data: unreadable content line 3"
+        );
+    }
+
+    #[test]
+    fn valid_names_still_parse() {
+        for ok in [
+            "item1.X-ABLabel:x",
+            "X-APPLE-OMIT-YEAR;x-a=1:y",
+            "NOTE:a:b;c=d",
+        ] {
+            Property::parse_line(ok).unwrap();
+        }
+    }
+
+    #[test]
+    fn set_param_replaces_every_repeat() {
+        let mut p = Property::parse_line("TEL;type=CELL;type=VOICE;X-A=1;type=pref:+1").unwrap();
+        p.set_param("TYPE", "HOME");
+        assert_eq!(p.to_line(), "TEL;TYPE=HOME;X-A=1:+1");
     }
 
     #[test]
