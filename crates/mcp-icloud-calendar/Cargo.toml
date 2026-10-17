@@ -18,7 +18,6 @@ rrule.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 quick-xml.workspace = true
-reqwest.workspace = true
 metrics.workspace = true
 tokio.workspace = true
 serde.workspace = true

@@ -1668,7 +1668,6 @@ dependencies = [
  "mcp-server-core",
  "metrics",
  "quick-xml",
- "reqwest",
  "rmcp",
  "rrule",
  "secrecy",
