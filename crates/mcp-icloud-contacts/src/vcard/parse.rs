@@ -403,6 +403,48 @@ mod tests {
     }
 
     #[test]
+    fn apple_fixtures_fold_like_apple() {
+        let mut folds = 0;
+        for text in [PERSON, COMPANY, GROUP] {
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let limit = if line.starts_with(' ') { 76 } else { 75 };
+                assert!(line.len() <= limit, "too long: {line:?}");
+                if lines.get(i + 1).is_some_and(|next| next.starts_with(' ')) {
+                    assert_eq!(line.len(), limit, "folded short: {line:?}");
+                    folds += 1;
+                }
+            }
+        }
+        assert!(
+            folds >= 6,
+            "the fixtures must exercise folding, saw {folds}"
+        );
+    }
+
+    #[test]
+    fn an_edited_apple_property_is_refolded_within_75_octets() {
+        let text = icloud(PERSON);
+        let mut card = parse_card(&text).unwrap();
+        let photo = card.prop_mut("PHOTO").unwrap();
+        let value = photo.value().to_string();
+        photo.set_value(value.clone());
+        let written = card.to_ics();
+        assert_ne!(written, text, "the edited property is folded again");
+        let photo_lines: Vec<&str> = written
+            .split("\r\n")
+            .skip_while(|l| !l.starts_with("PHOTO;"))
+            .take_while(|l| l.starts_with("PHOTO;") || l.starts_with(' '))
+            .collect();
+        assert!(photo_lines.len() > 1, "{photo_lines:?}");
+        assert!(photo_lines.iter().all(|l| l.len() <= 75), "{photo_lines:?}");
+        assert_eq!(
+            parse_card(&written).unwrap().prop("PHOTO").unwrap().value(),
+            value
+        );
+    }
+
+    #[test]
     fn an_apple_contact_shows_every_field() {
         let card = parse_card(&icloud(PERSON)).unwrap();
         assert_eq!(kind(&card), Kind::Contact);
