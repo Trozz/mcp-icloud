@@ -17,3 +17,9 @@ rrule.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 quick-xml.workspace = true
+reqwest.workspace = true
+metrics.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tokio.workspace = true

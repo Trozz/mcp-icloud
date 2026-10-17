@@ -1657,13 +1657,17 @@ dependencies = [
 name = "mcp-icloud-calendar"
 version = "0.0.0-dev"
 dependencies = [
+ "axum",
  "chrono",
  "chrono-tz",
  "mcp-server-core",
+ "metrics",
  "quick-xml",
+ "reqwest",
  "rrule",
  "secrecy",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "url",
  "uuid",
