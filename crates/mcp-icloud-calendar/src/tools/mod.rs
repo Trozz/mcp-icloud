@@ -23,6 +23,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::Instrument;
 
+pub mod write;
+
 pub const MAX_RANGE_DAYS: i64 = 366;
 pub const MAX_CONCURRENT_REPORTS: usize = 4;
 pub const MAX_FREE_SLOTS: usize = 100;
@@ -205,7 +207,7 @@ impl CalendarServer {
         Self {
             dir,
             settings,
-            tool_router: Self::read_router(),
+            tool_router: Self::read_router() + Self::write_router(),
         }
     }
 

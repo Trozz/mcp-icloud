@@ -31,17 +31,17 @@ const WEEK: (&str, &str) = ("2026-10-19", "2026-10-27");
 #[tokio::test]
 async fn read_tools_are_registered() {
     let fake = fake().await;
-    assert_eq!(
-        server(&fake, false).tool_names(),
-        [
-            "find_free_time",
-            "get_event",
-            "get_timezone",
-            "list_calendars",
-            "list_events",
-            "set_timezone"
-        ]
-    );
+    let names = server(&fake, false).tool_names();
+    for n in [
+        "find_free_time",
+        "get_event",
+        "get_timezone",
+        "list_calendars",
+        "list_events",
+        "set_timezone",
+    ] {
+        assert!(names.contains(&n.to_string()), "{names:?}");
+    }
 }
 
 #[tokio::test]
