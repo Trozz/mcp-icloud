@@ -70,3 +70,54 @@ async fn credentials_never_reach_the_logs() {
     let encoded = AUTH.trim_start_matches("Basic ");
     assert!(!logs.contains(encoded), "the Basic auth header leaked");
 }
+
+#[tokio::test]
+async fn unreadable_events_never_put_their_text_in_logs_or_results() {
+    const SENTINEL: &str = "SENTINEL-NOT-A-CONTENT-LINE";
+    let capture = Capture::default();
+    let writer = capture.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let _default = tracing::subscriber::set_default(subscriber);
+
+    let fake = FakeCalDav::start(FakeState::icloud_like()).await;
+    fake.state().put(
+        "home",
+        "broken.ics",
+        &format!(
+            "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:broken-1\nDTSTART;VALUE=DATE:20261101\n{SENTINEL}\nEND:VEVENT\nEND:VCALENDAR\n"
+        ),
+    );
+    let caldav = caldav_settings(fake.url.clone(), EMAIL.into(), SecretString::from(PASSWORD));
+    let dir = Arc::new(Directory::new(
+        Arc::new(DavClient::new(caldav).unwrap()),
+        EMAIL.into(),
+    ));
+    let server = CalendarServer::new(dir, settings(false));
+    let listed = server
+        .list_events(params(json!({"start": "2026-11-01", "end": "2026-11-02"})))
+        .await
+        .unwrap();
+    let got = server
+        .get_event(params(
+            json!({"event_id": FakeCalDav::event_id("home", "broken.ics")}),
+        ))
+        .await
+        .unwrap();
+    let texts = format!("{:?}{:?}", listed.content, got.content);
+    assert!(got.is_error == Some(true), "{texts}");
+    assert!(
+        !texts.contains(SENTINEL),
+        "event text reached a tool result: {texts}"
+    );
+
+    let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        logs.contains("skipping an unreadable event"),
+        "the broken event was not listed"
+    );
+    assert!(!logs.contains(SENTINEL), "event text reached the logs");
+}
