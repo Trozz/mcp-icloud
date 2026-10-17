@@ -2,6 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use mcp_icloud::{SERVICES, app, load};
+use mcp_server_core::jwt::{Jwt, Payload, TokenKind};
 use mcp_server_core::service::{HttpSettings, ServiceContext, ServiceEnv};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -11,17 +12,20 @@ use tower::ServiceExt;
 
 const TOKEN: &str = "static-test-token-0123456789";
 const HOST: &str = "icloud.example.com";
+const SIGNING_KEY: &str = "0123456789abcdef0123456789abcdef";
 
 /// Builds the application exactly as `main` does, from environment variables only.
 fn server(extra: &[(&str, &str)]) -> axum::Router {
     let mut vars: HashMap<String, String> = [
         ("PUBLIC_URL", "https://icloud.example.com"),
-        ("OAUTH_SIGNING_KEY", "0123456789abcdef0123456789abcdef"),
+        ("OAUTH_SIGNING_KEY", SIGNING_KEY),
         ("OAUTH_ADMIN_PASSWORD", "a long password"),
         ("MCP_AUTH_TOKEN", TOKEN),
         ("INSECURE_HTTP", "true"),
         ("ICLOUD_EMAIL", "me@icloud.com"),
         ("ICLOUD_APP_PASSWORD", "abcd-efgh-ijkl-mnop"),
+        // The calendar service starts discovery when mounted; keep it off the network.
+        ("CALDAV_URL", "http://127.0.0.1:9"),
     ]
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -215,4 +219,89 @@ async fn invalid_service_selection_fails_to_load() {
         "{:?}",
         env.errors
     );
+}
+
+/// An OAuth access token as `/token` issues it: bound to one service's resource.
+fn access_token_for(service: &str) -> String {
+    let jwt = Jwt::new(
+        SIGNING_KEY.as_bytes(),
+        "https://icloud.example.com",
+        "https://icloud.example.com",
+    );
+    let resource = format!("https://icloud.example.com/{service}");
+    jwt.issue_for(
+        TokenKind::Access,
+        Some(Duration::from_secs(3600)),
+        Payload {
+            client_id: Some("e2e".into()),
+            scope: Some(service.into()),
+            resource: Some(resource.clone()),
+            ..Payload::default()
+        },
+        &resource,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn calendar_is_served_at_its_path_with_the_static_token() {
+    let res = server(&[])
+        .oneshot(rpc("/calendar", initialize(), Some(TOKEN), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let init = rpc_message(res).await;
+    assert_eq!(init["result"]["serverInfo"]["name"], "mcp-icloud-calendar");
+}
+
+#[tokio::test]
+async fn a_mail_token_is_rejected_on_calendar() {
+    let app = server(&[]);
+    let mail = access_token_for("mail");
+    let res = app
+        .clone()
+        .oneshot(rpc("/mail", initialize(), Some(&mail), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .clone()
+        .oneshot(rpc("/calendar", initialize(), Some(&mail), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        res.headers()["www-authenticate"].to_str().unwrap(),
+        "Bearer resource_metadata=\"https://icloud.example.com/.well-known/oauth-protected-resource/calendar\", error=\"invalid_token\""
+    );
+    let calendar = access_token_for("calendar");
+    let res = app
+        .oneshot(rpc("/calendar", initialize(), Some(&calendar), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn calendar_metadata_and_selection() {
+    let res = server(&[])
+        .oneshot(
+            Request::get("/.well-known/oauth-protected-resource/calendar")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["resource"], "https://icloud.example.com/calendar");
+    assert_eq!(v["scopes_supported"], json!(["calendar"]));
+
+    let app = server(&[("ICLOUD_SERVICES", "mail")]);
+    let res = app
+        .oneshot(rpc("/calendar", initialize(), Some(TOKEN), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

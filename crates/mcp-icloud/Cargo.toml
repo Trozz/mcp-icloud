@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 mcp-server-core = { path = "../mcp-server-core" }
 mcp-icloud-mail = { path = "../mcp-icloud-mail" }
+mcp-icloud-calendar = { path = "../mcp-icloud-calendar" }
 anyhow.workspace = true
 tokio.workspace = true
 axum.workspace = true

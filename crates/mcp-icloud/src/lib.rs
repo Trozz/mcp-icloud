@@ -15,7 +15,10 @@ pub const CRATE_TARGET: &str = "mcp_icloud";
 
 /// Every service this binary can run, in mount order. Adding a service: a library crate
 /// implementing `mcp_server_core::service::Service`, a dependency in Cargo.toml and one line here.
-pub const SERVICES: &[(&str, ServiceFactory)] = &[("mail", mcp_icloud_mail::from_env)];
+pub const SERVICES: &[(&str, ServiceFactory)] = &[
+    ("mail", mcp_icloud_mail::from_env),
+    ("calendar", mcp_icloud_calendar::from_env),
+];
 
 /// Resolves `ICLOUD_SERVICES` (comma list, unset means every registered service).
 pub fn select<'a>(
@@ -76,6 +79,9 @@ pub fn load(env: &mut ServiceEnv, registry: &[(&'static str, ServiceFactory)]) -
             services.push(s);
         }
     }
+    // Services share some variables (ICLOUD_EMAIL, ICLOUD_APP_PASSWORD): report each error once.
+    let mut seen = std::collections::HashSet::new();
+    env.errors.retain(|e| seen.insert(e.clone()));
     if !env.errors.is_empty() {
         return None;
     }
@@ -213,11 +219,31 @@ mod tests {
 
     #[test]
     fn selection_errors_are_reported_with_the_rest() {
-        let mut e = with_core(&[("ICLOUD_SERVICES", "calendar")]);
+        let mut e = with_core(&[("ICLOUD_SERVICES", "contacts")]);
         assert!(load(&mut e, SERVICES).is_none());
         assert_eq!(
             e.errors,
-            vec!["ICLOUD_SERVICES contains an unknown service: calendar (known: mail)".to_string()]
+            vec![
+                "ICLOUD_SERVICES contains an unknown service: contacts (known: mail, calendar)"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn shared_variable_errors_are_reported_once() {
+        let mut e = env(&[
+            ("PUBLIC_URL", "https://icloud.example.com"),
+            ("OAUTH_SIGNING_KEY", "0123456789abcdef0123456789abcdef"),
+            ("OAUTH_ADMIN_PASSWORD", "a long password"),
+        ]);
+        assert!(load(&mut e, SERVICES).is_none());
+        assert_eq!(
+            e.errors,
+            vec![
+                "ICLOUD_EMAIL is required".to_string(),
+                "ICLOUD_APP_PASSWORD is required".to_string()
+            ]
         );
     }
 
