@@ -1,6 +1,7 @@
 pub mod book;
 pub mod config;
 pub mod error;
+pub mod index;
 pub mod search;
 pub mod vcard;
 
