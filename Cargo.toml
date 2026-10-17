@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/mcp-server-core", "crates/mcp-icloud-dav", "crates/mcp-icloud-mail", "crates/mcp-icloud-calendar", "crates/mcp-icloud"]
+members = ["crates/mcp-server-core", "crates/mcp-icloud-dav", "crates/mcp-icloud-mail", "crates/mcp-icloud-calendar", "crates/mcp-icloud-contacts", "crates/mcp-icloud"]
 
 [workspace.package]
 version = "0.0.0-dev"
@@ -54,6 +54,7 @@ rrule = { version = "=0.14.0", default-features = false }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10.4"
 quick-xml = "=0.42.0"
+unicode-normalization = "0.1.26"
 
 [profile.release]
 lto = true

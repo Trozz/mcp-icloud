@@ -1,0 +1,11 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:ez-vcard 0.9.15-fc
+FN:Jordan Sample
+N:Sample;Jordan;;;
+TEL;TYPE=cell:07700 900321
+EMAIL;TYPE=work:jordan@example.net
+BDAY:19850302
+REV:20250102T030405Z
+UID:other-client-0001
+END:VCARD
