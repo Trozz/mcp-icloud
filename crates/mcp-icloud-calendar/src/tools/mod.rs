@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::Instrument;
 
+pub mod invite;
 pub mod write;
 
 pub const MAX_RANGE_DAYS: i64 = 366;
@@ -204,10 +205,14 @@ fn same_instant(a: &When, b: &When, zone: Tz) -> bool {
 
 impl CalendarServer {
     pub fn new(dir: Arc<Directory>, settings: Arc<ToolSettings>) -> Self {
+        let mut tool_router = Self::read_router() + Self::write_router();
+        if settings.allow_invites {
+            tool_router += Self::invite_router();
+        }
         Self {
             dir,
             settings,
-            tool_router: Self::read_router() + Self::write_router(),
+            tool_router,
         }
     }
 

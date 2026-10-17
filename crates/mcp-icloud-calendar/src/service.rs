@@ -104,6 +104,18 @@ mod tests {
     }
 
     #[test]
+    fn respond_to_invitation_is_registered_only_with_invitations_enabled() {
+        let mut e = env(&[
+            ("ICLOUD_EMAIL", "user@example.com"),
+            ("ICLOUD_APP_PASSWORD", "abcd-efgh-ijkl-mnop"),
+            ("ICLOUD_ALLOW_INVITES", "true"),
+        ]);
+        let tools = from_env(&mut e).expect("service").tool_names();
+        assert_eq!(tools.len(), 10, "{tools:?}");
+        assert!(tools.contains(&"respond_to_invitation".to_string()));
+    }
+
+    #[test]
     fn missing_config_is_reported_and_no_service_is_built() {
         let mut e = env(&[("CALENDAR_TIMEZONE", "Mars/Olympus")]);
         assert!(from_env(&mut e).is_none());
