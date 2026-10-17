@@ -144,6 +144,28 @@ async fn unparseable_cards_are_kept_but_not_listed() {
 }
 
 #[tokio::test]
+async fn an_unparseable_group_is_reported_as_unreadable_not_as_a_contact() {
+    let mut state = FakeState::icloud_like();
+    state.put(
+        "BROKEN-GROUP.vcf",
+        "BEGIN:VCARD\nVERSION:3.0\nUID:BROKEN-G\nX-ADDRESSBOOKSERVER-KIND:group\nFN:Broken\n",
+    );
+    let (_fake, store) = start(state).await;
+    let idx = store.open().await.unwrap();
+    let e = idx.group_card("BROKEN-G").unwrap_err();
+    assert_eq!(e.kind(), "upstream");
+    assert_eq!(
+        e.to_string(),
+        "iCloud error: the group BROKEN-G could not be parsed; it is left unchanged"
+    );
+    assert_eq!(idx.contact("BROKEN-G").unwrap_err().kind(), "validation");
+    assert_eq!(
+        idx.card(" nope ").unwrap_err().to_string(),
+        "not found: no contact or group has the id nope"
+    );
+}
+
+#[tokio::test]
 async fn many_cards_are_fetched_in_batches_of_100() {
     let mut state = FakeState::icloud_like();
     for i in 0..250 {

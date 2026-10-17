@@ -41,6 +41,19 @@ pub fn uid_of_text(text: &str) -> Option<String> {
     })
 }
 
+/// Whether stored text is a group card, also when the text does not parse as a card.
+pub fn is_group_text(text: &str) -> bool {
+    unfold(text).into_iter().any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.split(';')
+                .next()
+                .unwrap_or(name)
+                .eq_ignore_ascii_case(GROUP_KIND)
+                && value.trim().eq_ignore_ascii_case("group")
+        })
+    })
+}
+
 /// Properties with this name, with or without an `itemN.` group, with their index.
 pub fn named<'a>(
     card: &'a Component,

@@ -129,7 +129,13 @@ impl Index {
                 match (r.status, r.props.etag, r.props.address_data) {
                     (Some(404), _, _) => self.remove(&path),
                     (_, Some(etag), Some(data)) => self.insert(path, etag, &data),
-                    _ => {}
+                    (status, etag, data) => tracing::warn!(
+                        card = %path,
+                        ?status,
+                        has_etag = etag.is_some(),
+                        has_data = data.is_some(),
+                        "iCloud returned a card without its ETag or data; it is skipped"
+                    ),
                 }
             }
         }
@@ -152,7 +158,11 @@ impl Index {
                         href,
                         etag,
                         uid,
-                        kind: Kind::Contact,
+                        kind: if parse::is_group_text(text) {
+                            Kind::Group
+                        } else {
+                            Kind::Contact
+                        },
                         card: None,
                         contact: None,
                         group: None,
@@ -211,7 +221,9 @@ impl Index {
         self.by_uid
             .get(id.trim())
             .and_then(|h| self.cards.get(h))
-            .ok_or_else(|| ContactsError::NotFound(format!("no contact or group has the id {id}")))
+            .ok_or_else(|| {
+                ContactsError::NotFound(format!("no contact or group has the id {}", id.trim()))
+            })
     }
 
     /// A contact card by id; a group id is a validation error, an unparseable card upstream.
@@ -230,11 +242,14 @@ impl Index {
         }
     }
 
-    /// A group card by id; a contact id is a validation error.
+    /// A group card by id; a contact id is a validation error, an unparseable group upstream.
     pub fn group_card(&self, id: &str) -> Result<(&Card, &Component)> {
         let card = self.card(id)?;
         match (&card.card, card.kind) {
             (Some(c), Kind::Group) => Ok((card, c)),
+            (None, Kind::Group) => Err(ContactsError::Upstream(format!(
+                "the group {id} could not be parsed; it is left unchanged"
+            ))),
             _ => Err(ContactsError::invalid(format!(
                 "{id} is not a group; use list_groups for group ids"
             ))),
