@@ -2,11 +2,12 @@ mod support;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
-use mcp_icloud_mail::app::{HttpSettings, mcp_router};
+use mcp_icloud_mail::MailService;
 use mcp_icloud_mail::smtp::{RecordingSender, Sender};
 use mcp_server_core::config::{CoreConfig, EnvReader};
 use mcp_server_core::oauth::AuthState;
 use mcp_server_core::server::build_app;
+use mcp_server_core::service::{HttpSettings, Service, ServiceContext};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,7 +20,7 @@ use tower::ServiceExt;
 const TOKEN: &str = "static-test-token-0123456789";
 const HOST: &str = "mail.example.com";
 
-/// Builds the full application (auth, OAuth routes, MCP) the way `main` does, against the fake.
+/// Builds the full application (auth, OAuth routes, mail at /mail) the way the server does, against the fake.
 async fn app(allow_send: bool) -> (axum::Router, FakeImap) {
     let mut st = FakeState::icloud_like();
     st.add_message(
@@ -36,27 +37,21 @@ async fn app(allow_send: bool) -> (axum::Router, FakeImap) {
         ("INSECURE_HTTP", "true"),
     ]);
     let mut env = EnvReader::new(move |k: &str| vars.get(k).map(|v| v.to_string()));
-    let core = CoreConfig::from_env(&mut env, "mcp-icloud-mail", "mcp_icloud_mail")
+    let core = CoreConfig::from_env(&mut env, "mcp-icloud", "mcp_icloud")
         .unwrap_or_else(|| panic!("config errors: {:?}", env.errors));
-    let http = HttpSettings {
-        public_url: core.public_url.clone(),
-        public_host: core.public_host.clone(),
-        allowed_origins: core.allowed_origins.clone(),
+    let ctx = ServiceContext {
+        http: HttpSettings::from_core(&core),
+        shutdown: CancellationToken::new(),
     };
     let sender: Option<Arc<dyn Sender>> =
         allow_send.then(|| Arc::new(RecordingSender::default()) as Arc<dyn Sender>);
-    let mcp = mcp_router(
-        &http,
-        imap(&fake),
-        sender,
-        settings(1024 * 1024),
-        CancellationToken::new(),
-    );
+    let mail = Arc::new(MailService::new(imap(&fake), sender, settings(1024 * 1024)));
+    let mcp = axum::Router::new().nest_service("/mail", mail.router(&ctx));
     (build_app(AuthState::new(core.oauth), mcp), fake)
 }
 
 fn post(session: Option<&str>) -> axum::http::request::Builder {
-    let mut b = Request::post("/mcp")
+    let mut b = Request::post("/mail")
         .header("host", HOST)
         .header("authorization", format!("Bearer {TOKEN}"))
         .header("content-type", "application/json")
