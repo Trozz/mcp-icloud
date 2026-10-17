@@ -13,6 +13,7 @@ use std::time::Instant;
 use tracing::Instrument;
 
 pub mod read;
+pub mod write;
 
 const INSTRUCTIONS: &str = "Tools for the iCloud Contacts of one account. \
 Contacts and groups (iOS Lists) are addressed by id from search_contacts or list_groups. \
@@ -30,7 +31,7 @@ impl ContactsServer {
     pub fn new(store: Arc<Store>) -> Self {
         Self {
             store,
-            tool_router: Self::read_router(),
+            tool_router: Self::read_router() + Self::write_router(),
         }
     }
 
