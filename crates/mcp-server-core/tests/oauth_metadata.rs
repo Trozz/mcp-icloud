@@ -4,19 +4,37 @@ use oauth_support::*;
 use serde_json::json;
 
 #[tokio::test]
-async fn protected_resource_metadata() {
+async fn protected_resource_metadata_per_service() {
+    let app = app(state_two_services(None));
+    for service in ["mail", "calendar"] {
+        let res = send(
+            &app,
+            get(&format!("/.well-known/oauth-protected-resource/{service}")),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(res).await;
+        assert_eq!(v["resource"], format!("https://mail.example.com/{service}"));
+        assert_eq!(
+            v["authorization_servers"],
+            json!(["https://mail.example.com"])
+        );
+        assert_eq!(v["scopes_supported"], json!([service]));
+    }
+}
+
+#[tokio::test]
+async fn unknown_or_old_resource_metadata_is_not_found() {
     let app = app(state());
     for path in [
         "/.well-known/oauth-protected-resource",
         "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-protected-resource/calendar",
     ] {
-        let res = send(&app, get(path)).await;
-        assert_eq!(res.status(), StatusCode::OK);
-        let v = body_json(res).await;
-        assert_eq!(v["resource"], "https://mail.example.com/mcp");
         assert_eq!(
-            v["authorization_servers"],
-            json!(["https://mail.example.com"])
+            send(&app, get(path)).await.status(),
+            StatusCode::NOT_FOUND,
+            "{path}"
         );
     }
 }
@@ -48,6 +66,16 @@ async fn authorization_server_metadata() {
         json!(["authorization_code", "refresh_token"])
     );
     assert_eq!(v["response_types_supported"], json!(["code"]));
+    assert_eq!(v["scopes_supported"], json!(["mail"]));
+    let v = body_json(
+        send(
+            &app(state_two_services(None)),
+            get("/.well-known/oauth-authorization-server"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(v["scopes_supported"], json!(["mail", "calendar"]));
 }
 
 #[tokio::test]

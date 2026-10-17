@@ -46,8 +46,8 @@ async fn app(allow_send: bool) -> (axum::Router, FakeImap) {
     let sender: Option<Arc<dyn Sender>> =
         allow_send.then(|| Arc::new(RecordingSender::default()) as Arc<dyn Sender>);
     let mail = Arc::new(MailService::new(imap(&fake), sender, settings(1024 * 1024)));
-    let mcp = axum::Router::new().nest_service("/mail", mail.router(&ctx));
-    (build_app(AuthState::new(core.oauth), mcp), fake)
+    let auth = AuthState::new(core.oauth, &["mail"]);
+    (build_app(auth, vec![("mail", mail.router(&ctx))]), fake)
 }
 
 fn post(session: Option<&str>) -> axum::http::request::Builder {

@@ -10,26 +10,39 @@ use tower::ServiceExt;
 pub const PUBLIC_URL: &str = "https://mail.example.com";
 pub const PASSWORD: &str = "correct horse battery staple";
 
+/// One service, `mail`.
 pub fn state() -> Arc<AuthState> {
     state_with_static(None)
 }
 
 pub fn state_with_static(token: Option<&str>) -> Arc<AuthState> {
-    state_with(token, Vec::new())
+    state_with(token, Vec::new(), &["mail"])
+}
+
+/// Two services, `mail` and `calendar`.
+pub fn state_two_services(token: Option<&str>) -> Arc<AuthState> {
+    state_with(token, Vec::new(), &["mail", "calendar"])
 }
 
 pub fn state_with_trusted_proxies(trusted_proxies: Vec<IpAddr>) -> Arc<AuthState> {
-    state_with(None, trusted_proxies)
+    state_with(None, trusted_proxies, &["mail"])
 }
 
-fn state_with(token: Option<&str>, trusted_proxies: Vec<IpAddr>) -> Arc<AuthState> {
-    AuthState::new(OAuthSettings {
-        public_url: PUBLIC_URL.into(),
-        signing_key: "0123456789abcdef0123456789abcdef".to_string().into(),
-        admin_password: PASSWORD.to_string().into(),
-        static_token: token.map(|t| t.to_string().into()),
-        trusted_proxies,
-    })
+fn state_with(
+    token: Option<&str>,
+    trusted_proxies: Vec<IpAddr>,
+    services: &[&str],
+) -> Arc<AuthState> {
+    AuthState::new(
+        OAuthSettings {
+            public_url: PUBLIC_URL.into(),
+            signing_key: "0123456789abcdef0123456789abcdef".to_string().into(),
+            admin_password: PASSWORD.to_string().into(),
+            static_token: token.map(|t| t.to_string().into()),
+            trusted_proxies,
+        },
+        services,
+    )
 }
 
 pub fn app(state: Arc<AuthState>) -> axum::Router {

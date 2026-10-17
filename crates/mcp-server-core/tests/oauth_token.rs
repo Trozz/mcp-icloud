@@ -31,7 +31,7 @@ fn code(st: &mcp_server_core::oauth::AuthState, client_id: &str) -> String {
                 redirect_uri: Some(REDIRECT.into()),
                 code_challenge: Some(CHALLENGE.into()),
                 scope: Some("mail".into()),
-                resource: Some("https://mail.example.com/mcp".into()),
+                resource: Some("https://mail.example.com/mail".into()),
                 ..Default::default()
             },
         )
@@ -70,12 +70,24 @@ async fn code_exchange_returns_tokens() {
     let v = body_json(res).await;
     assert_eq!(v["token_type"], "Bearer");
     assert_eq!(v["expires_in"], 3600);
-    st.jwt
-        .verify(v["access_token"].as_str().unwrap(), TokenKind::Access)
+    assert_eq!(v["scope"], "mail");
+    let access = st
+        .jwt
+        .verify_for(
+            v["access_token"].as_str().unwrap(),
+            TokenKind::Access,
+            "https://mail.example.com/mail",
+        )
         .unwrap();
-    st.jwt
+    assert_eq!(access.aud, "https://mail.example.com/mail");
+    let refresh = st
+        .jwt
         .verify(v["refresh_token"].as_str().unwrap(), TokenKind::Refresh)
         .unwrap();
+    assert_eq!(
+        refresh.payload.resource.as_deref(),
+        Some("https://mail.example.com/mail")
+    );
 }
 
 #[tokio::test]
@@ -168,6 +180,7 @@ async fn refresh_grant_returns_new_pair() {
             Payload {
                 client_id: Some(cid.clone()),
                 scope: Some("mail".into()),
+                resource: Some("https://mail.example.com/mail".into()),
                 ..Default::default()
             },
         )
@@ -187,7 +200,11 @@ async fn refresh_grant_returns_new_pair() {
     assert_eq!(res.status(), StatusCode::OK);
     let v = body_json(res).await;
     st.jwt
-        .verify(v["access_token"].as_str().unwrap(), TokenKind::Access)
+        .verify_for(
+            v["access_token"].as_str().unwrap(),
+            TokenKind::Access,
+            "https://mail.example.com/mail",
+        )
         .unwrap();
     st.jwt
         .verify(v["refresh_token"].as_str().unwrap(), TokenKind::Refresh)
@@ -260,4 +277,116 @@ async fn unknown_grant_type() {
     )
     .await;
     assert_eq!(body_json(res).await["error"], "unsupported_grant_type");
+}
+
+fn refresh_token(
+    st: &mcp_server_core::oauth::AuthState,
+    cid: &str,
+    resource: Option<&str>,
+) -> String {
+    st.jwt
+        .issue(
+            TokenKind::Refresh,
+            Some(Duration::from_secs(60)),
+            Payload {
+                client_id: Some(cid.into()),
+                scope: Some("mail".into()),
+                resource: resource.map(String::from),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+}
+
+fn refresh_request(
+    token: &str,
+    cid: &str,
+    resource: Option<&str>,
+) -> axum::http::Request<axum::body::Body> {
+    let mut pairs = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", token),
+        ("client_id", cid),
+    ];
+    if let Some(r) = resource {
+        pairs.push(("resource", r));
+    }
+    form_post("/token", &pairs)
+}
+
+#[tokio::test]
+async fn refresh_without_resource_is_rejected() {
+    let st = state();
+    let cid = client(&st);
+    let res = send(
+        &app(st.clone()),
+        refresh_request(&refresh_token(&st, &cid, None), &cid, None),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(res).await["error"], "invalid_grant");
+}
+
+#[tokio::test]
+async fn refresh_minted_for_the_old_mcp_audience_is_rejected() {
+    let st = state();
+    let cid = client(&st);
+    let old = mcp_server_core::jwt::Jwt::new(
+        b"0123456789abcdef0123456789abcdef",
+        "https://mail.example.com",
+        "https://mail.example.com/mcp",
+    )
+    .issue(
+        TokenKind::Refresh,
+        Some(Duration::from_secs(60)),
+        Payload {
+            client_id: Some(cid.clone()),
+            scope: Some("mail".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let res = send(&app(st.clone()), refresh_request(&old, &cid, None)).await;
+    assert_eq!(body_json(res).await["error"], "invalid_grant");
+}
+
+#[tokio::test]
+async fn refresh_for_a_disabled_service_is_rejected() {
+    let st = state();
+    let cid = client(&st);
+    let token = refresh_token(&st, &cid, Some("https://mail.example.com/calendar"));
+    let res = send(&app(st.clone()), refresh_request(&token, &cid, None)).await;
+    assert_eq!(body_json(res).await["error"], "invalid_target");
+}
+
+#[tokio::test]
+async fn token_request_resource_must_match_the_grant() {
+    let st = state_two_services(None);
+    let cid = client(&st);
+    let token = refresh_token(&st, &cid, Some("https://mail.example.com/mail"));
+    let app = app(st.clone());
+    let res = send(
+        &app,
+        refresh_request(&token, &cid, Some("https://mail.example.com/calendar")),
+    )
+    .await;
+    assert_eq!(body_json(res).await["error"], "invalid_target");
+    let res = send(
+        &app,
+        refresh_request(&token, &cid, Some("https://mail.example.com/mail")),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let mut req_pairs = vec![
+        ("grant_type", "authorization_code"),
+        ("client_id", cid.as_str()),
+        ("code_verifier", VERIFIER),
+        ("redirect_uri", REDIRECT),
+        ("resource", "https://mail.example.com/calendar"),
+    ];
+    let c = code(&st, &cid);
+    req_pairs.push(("code", c.as_str()));
+    let res = send(&app, form_post("/token", &req_pairs)).await;
+    assert_eq!(body_json(res).await["error"], "invalid_target");
 }

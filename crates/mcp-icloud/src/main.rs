@@ -70,7 +70,7 @@ async fn run(loaded: Loaded) -> anyhow::Result<()> {
     for s in &services {
         tracing::info!(
             service = s.name(),
-            url = format!("{}/{}", core.public_url, s.name()),
+            url = core.service_url(s.name()),
             tools = ?s.tool_names(),
             "service enabled"
         );

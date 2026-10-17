@@ -85,17 +85,20 @@ pub fn load(env: &mut ServiceEnv, registry: &[(&'static str, ServiceFactory)]) -
     })
 }
 
-/// The full HTTP application: health, OAuth routes and each service at `/<name>`.
+/// The full HTTP application: health, OAuth routes and each service at `/<name>`, every service
+/// its own OAuth protected resource.
 pub fn app(
     oauth: OAuthSettings,
     services: &[Arc<dyn Service>],
     ctx: &ServiceContext,
 ) -> axum::Router {
-    let mut mcp = axum::Router::new();
-    for s in services {
-        mcp = mcp.nest_service(&format!("/{}", s.name()), s.clone().router(ctx));
-    }
-    build_app(AuthState::new(oauth), mcp)
+    let names: Vec<&str> = services.iter().map(|s| s.name()).collect();
+    let auth = AuthState::new(oauth, &names);
+    let routers = services
+        .iter()
+        .map(|s| (s.name(), s.clone().router(ctx)))
+        .collect();
+    build_app(auth, routers)
 }
 
 /// Drops any user directive for a capped target and caps it at info: some dependencies log

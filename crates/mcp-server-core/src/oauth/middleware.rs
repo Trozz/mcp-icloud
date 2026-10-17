@@ -8,10 +8,10 @@ use axum::response::{IntoResponse, Response};
 use secrecy::ExposeSecret;
 use std::sync::Arc;
 
-fn unauthorized(st: &AuthState, token_present: bool) -> Response {
+fn unauthorized(st: &AuthState, service: &str, token_present: bool) -> Response {
     let mut value = format!(
         "Bearer resource_metadata=\"{}\"",
-        st.resource_metadata_url()
+        st.resource_metadata_url(service)
     );
     if token_present {
         value.push_str(", error=\"invalid_token\"");
@@ -23,8 +23,10 @@ fn unauthorized(st: &AuthState, token_present: bool) -> Response {
     res
 }
 
+/// Guards one service path: accepts the static token, or an OAuth access token whose audience is
+/// this service's resource.
 pub async fn require_bearer(
-    State(st): State<Arc<AuthState>>,
+    State((st, service)): State<(Arc<AuthState>, String)>,
     mut req: Request,
     next: Next,
 ) -> Response {
@@ -35,7 +37,7 @@ pub async fn require_bearer(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::to_owned);
     let Some(token) = token else {
-        return unauthorized(&st, false);
+        return unauthorized(&st, &service, false);
     };
     if st
         .settings
@@ -45,11 +47,14 @@ pub async fn require_bearer(
     {
         return next.run(req).await;
     }
-    match st.jwt.verify(&token, TokenKind::Access) {
+    match st
+        .jwt
+        .verify_for(&token, TokenKind::Access, &st.resource(&service))
+    {
         Ok(claims) => {
             req.extensions_mut().insert(claims);
             next.run(req).await
         }
-        Err(_) => unauthorized(&st, true),
+        Err(_) => unauthorized(&st, &service, true),
     }
 }

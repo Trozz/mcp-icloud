@@ -139,18 +139,40 @@ async fn mail_is_served_at_its_path_with_the_static_token() {
 }
 
 #[tokio::test]
-async fn mail_without_a_token_is_unauthorized() {
-    let res = server(&[])
+async fn mail_without_a_token_points_to_its_resource_metadata() {
+    let app = server(&[]);
+    let res = app
+        .clone()
         .oneshot(rpc("/mail", initialize(), None, None))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-    assert!(
-        res.headers()["www-authenticate"]
-            .to_str()
-            .unwrap()
-            .starts_with("Bearer resource_metadata=")
+    assert_eq!(
+        res.headers()["www-authenticate"].to_str().unwrap(),
+        "Bearer resource_metadata=\"https://icloud.example.com/.well-known/oauth-protected-resource/mail\""
     );
+    let res = app
+        .oneshot(
+            Request::get("/.well-known/oauth-protected-resource/mail")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["resource"], "https://icloud.example.com/mail");
+    assert_eq!(v["scopes_supported"], json!(["mail"]));
+}
+
+#[tokio::test]
+async fn old_mcp_path_is_not_served() {
+    let res = server(&[])
+        .oneshot(rpc("/mcp", initialize(), Some(TOKEN), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

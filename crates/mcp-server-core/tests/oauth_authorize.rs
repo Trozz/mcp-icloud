@@ -279,7 +279,17 @@ async fn login_page_shows_redirect_host_and_unverified_client_name() {
 }
 
 #[tokio::test]
-async fn granted_scope_is_always_mail() {
+async fn login_page_names_the_service() {
+    let st = state();
+    let html = login_page(&app(st.clone()), &client_id(&st)).await;
+    assert!(
+        html.contains("requesting access to the <strong>mail</strong> service"),
+        "{html}"
+    );
+}
+
+#[tokio::test]
+async fn granted_scope_is_the_resource_service() {
     let st = state();
     let app = app(st.clone());
     let q = format!(
@@ -301,6 +311,10 @@ async fn granted_scope_is_always_mail() {
     let q: std::collections::HashMap<_, _> = loc.query_pairs().into_owned().collect();
     let code = st.jwt.verify(&q["code"], TokenKind::Code).unwrap();
     assert_eq!(code.payload.scope.as_deref(), Some("mail"));
+    assert_eq!(
+        code.payload.resource.as_deref(),
+        Some("https://mail.example.com/mail")
+    );
 }
 
 #[tokio::test]

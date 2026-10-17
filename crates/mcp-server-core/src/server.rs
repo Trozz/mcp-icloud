@@ -21,12 +21,22 @@ pub async fn http_metrics(req: Request, next: Next) -> Response {
     res
 }
 
-pub fn build_app(auth: Arc<AuthState>, mcp: Router) -> Router {
-    let protected = mcp.layer(middleware::from_fn_with_state(auth.clone(), require_bearer));
-    Router::new()
+/// Health, the OAuth routes and each service nested at `/<name>` behind its own bearer guard.
+/// Every name must be one of the services `auth` was created with.
+pub fn build_app(auth: Arc<AuthState>, services: Vec<(&'static str, Router)>) -> Router {
+    let mut app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .merge(oauth_router(auth))
-        .merge(protected)
+        .merge(oauth_router(auth.clone()));
+    for (name, router) in services {
+        assert!(
+            auth.has_service(name),
+            "service {name} is not registered with AuthState"
+        );
+        let guard =
+            middleware::from_fn_with_state((auth.clone(), name.to_string()), require_bearer);
+        app = app.nest_service(&format!("/{name}"), router.layer(guard));
+    }
+    app
         .layer(middleware::from_fn(http_metrics))
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT))

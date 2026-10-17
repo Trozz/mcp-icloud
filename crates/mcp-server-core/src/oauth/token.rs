@@ -21,6 +21,7 @@ pub struct TokenRequest {
     pub client_id: Option<String>,
     pub code_verifier: Option<String>,
     pub refresh_token: Option<String>,
+    pub resource: Option<String>,
 }
 
 fn no_store(mut res: Response) -> Response {
@@ -41,15 +42,40 @@ fn oauth_error(code: &'static str, description: &str) -> Response {
     )
 }
 
-fn issue_pair(st: &AuthState, client_id: String, scope: String) -> Response {
+/// The service a grant is for: its stored resource must still be an enabled service, and a
+/// `resource` parameter on the token request (RFC 8707) must name the same resource.
+/// Errors are `(error code, description)` for `oauth_error`.
+fn granted_service(
+    st: &AuthState,
+    stored: Option<&str>,
+    requested: Option<&str>,
+) -> Result<String, (&'static str, &'static str)> {
+    let Some(resource) = stored else {
+        return Err(("invalid_grant", "grant has no resource"));
+    };
+    if requested.is_some_and(|r| r != resource) {
+        return Err(("invalid_target", "resource does not match the grant"));
+    }
+    st.service_for_resource(resource)
+        .map(String::from)
+        .ok_or(("invalid_target", "resource is not a service on this server"))
+}
+
+fn issue_pair(st: &AuthState, client_id: String, service: String) -> Response {
+    let resource = st.resource(&service);
     let payload = Payload {
         client_id: Some(client_id),
-        scope: Some(scope.clone()),
+        scope: Some(service.clone()),
+        resource: Some(resource.clone()),
         ..Default::default()
     };
     let (Ok(access), Ok(refresh)) = (
-        st.jwt
-            .issue(TokenKind::Access, Some(ACCESS_TTL), payload.clone()),
+        st.jwt.issue_for(
+            TokenKind::Access,
+            Some(ACCESS_TTL),
+            payload.clone(),
+            &resource,
+        ),
         st.jwt.issue(TokenKind::Refresh, Some(REFRESH_TTL), payload),
     ) else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
@@ -62,7 +88,7 @@ fn issue_pair(st: &AuthState, client_id: String, scope: String) -> Response {
             "token_type": "Bearer",
             "expires_in": ACCESS_TTL.as_secs(),
             "refresh_token": refresh,
-            "scope": scope,
+            "scope": service,
         }))
         .into_response(),
     )
@@ -102,15 +128,15 @@ fn authorization_code(st: &AuthState, req: &TokenRequest) -> Response {
     {
         return oauth_error("invalid_grant", "PKCE verification failed");
     }
+    let service = match granted_service(st, p.resource.as_deref(), req.resource.as_deref()) {
+        Ok(s) => s,
+        Err((code, description)) => return oauth_error(code, description),
+    };
     if !st.replay.first_use(&claims.jti, claims.exp.unwrap_or(0)) {
         tracing::warn!("authorization code replay rejected");
         return oauth_error("invalid_grant", "code already used");
     }
-    issue_pair(
-        st,
-        client_id.clone(),
-        p.scope.clone().unwrap_or_else(|| "mail".into()),
-    )
+    issue_pair(st, client_id.clone(), service)
 }
 
 fn refresh(st: &AuthState, req: &TokenRequest) -> Response {
@@ -135,11 +161,15 @@ fn refresh(st: &AuthState, req: &TokenRequest) -> Response {
     if st.jwt.verify(&client_id, TokenKind::Client).is_err() {
         return oauth_error("invalid_client", "unknown client");
     }
-    issue_pair(
+    let service = match granted_service(
         st,
-        client_id,
-        claims.payload.scope.unwrap_or_else(|| "mail".into()),
-    )
+        claims.payload.resource.as_deref(),
+        req.resource.as_deref(),
+    ) {
+        Ok(s) => s,
+        Err((code, description)) => return oauth_error(code, description),
+    };
+    issue_pair(st, client_id, service)
 }
 
 pub async fn token(State(st): State<Arc<AuthState>>, Form(req): Form<TokenRequest>) -> Response {
