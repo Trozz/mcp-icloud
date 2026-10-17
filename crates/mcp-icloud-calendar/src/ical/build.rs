@@ -340,7 +340,11 @@ fn shifted_end(
             "give an end as well when switching between all-day and timed",
         ));
     }
-    new_start.add(current.duration(fallback)).ok_or_else(|| {
+    let length = match (&current.start, &current.end) {
+        (When::Date(s), When::Date(e)) => *e - *s,
+        _ => current.duration(fallback),
+    };
+    new_start.add(length).ok_or_else(|| {
         CalError::invalid("the moved event would end outside the supported date range")
     })
 }
@@ -778,6 +782,27 @@ mod tests {
             .unwrap();
         assert!(after.contains(key));
         assert_eq!(before.len(), after.len());
+    }
+
+    #[test]
+    fn moving_an_all_day_start_keeps_whole_days_across_a_dst_change() {
+        for (start, end, days) in [
+            ("2027-03-28", "2027-03-29", 1),
+            ("2027-03-27", "2027-03-30", 3),
+        ] {
+            let ev = basic(When::Date(date(start)), When::Date(date(end)));
+            let mut cal = new_resource(&ev, "u", now(), Europe::London).unwrap();
+            let vevent = cal.children_mut("VEVENT").next().unwrap();
+            let patch = EventPatch {
+                start: Some(When::Date(date("2027-04-10"))),
+                ..Default::default()
+            };
+            apply_patch(vevent, &patch, now(), Europe::London).unwrap();
+            let ics = cal.to_ics();
+            let end = date("2027-04-10") + Duration::days(days);
+            assert!(ics.contains("DTSTART;VALUE=DATE:20270410\r\n"));
+            assert!(ics.contains(&format!("DTEND;VALUE=DATE:{}\r\n", end.format("%Y%m%d"))));
+        }
     }
 
     #[test]
