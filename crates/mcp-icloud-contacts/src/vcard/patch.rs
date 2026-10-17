@@ -32,6 +32,7 @@ fn invalid(msg: impl Into<String>) -> ContactsError {
 pub fn apply(card: &mut Component, f: &ContactFields) -> Result<()> {
     validate(f)?;
     let mut numbers = ItemNumbers::new(card);
+    let before = (n_value(card), org_name(card));
     if f.changes_name() {
         set_name(card, f);
     }
@@ -56,7 +57,10 @@ pub fn apply(card: &mut Component, f: &ContactFields) -> Result<()> {
             set_text(card, "FN", v);
             false
         }
-        None => f.changes_name() || (f.organization.is_some() && person_name(card).is_empty()),
+        None => {
+            before.0 != n_value(card)
+                || (person_name(card).is_empty() && before.1 != org_name(card))
+        }
     };
     if rebuild {
         rebuild_display_name(card)?;
@@ -284,6 +288,16 @@ fn person_name(card: &Component) -> String {
         &opt(&parts[0]),
         &opt(&parts[4]),
     ])
+}
+
+fn n_value(card: &Component) -> Option<String> {
+    named(card, "N").next().map(|(_, p)| p.value().to_string())
+}
+
+fn org_name(card: &Component) -> Option<String> {
+    named(card, "ORG")
+        .next()
+        .and_then(|(_, p)| parse::components(p.value()).into_iter().next())
 }
 
 fn rebuild_display_name(card: &mut Component) -> Result<()> {
@@ -816,6 +830,35 @@ mod tests {
                 "FN:Dr. Alexandra J. Example Jr."
             ]
         );
+    }
+
+    #[test]
+    fn resending_an_unchanged_name_keeps_a_custom_display_name() {
+        let text = PERSON.replace("FN:Dr. Alex J. Example Jr.", "FN:Lexie");
+        let (removed, added) = change(
+            &text,
+            ContactFields {
+                given_name: Some("Alex".into()),
+                family_name: Some("Example".into()),
+                ..ContactFields::default()
+            },
+        );
+        assert!(removed.is_empty(), "{removed:?}");
+        assert!(added.is_empty(), "{added:?}");
+    }
+
+    #[test]
+    fn resending_an_unchanged_organization_keeps_a_custom_display_name() {
+        let text = COMPANY.replace("FN:Example Plumbing Co", "FN:Example Pipes");
+        let (removed, added) = change(
+            &text,
+            ContactFields {
+                organization: Some("Example Plumbing Co".into()),
+                ..ContactFields::default()
+            },
+        );
+        assert!(removed.is_empty(), "{removed:?}");
+        assert!(added.is_empty(), "{added:?}");
     }
 
     #[test]
