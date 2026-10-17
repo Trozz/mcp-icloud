@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/mcp-server-core", "crates/mcp-icloud-mail", "crates/mcp-icloud"]
+members = ["crates/mcp-server-core", "crates/mcp-icloud-mail", "crates/mcp-icloud-calendar", "crates/mcp-icloud"]
 
 [workspace.package]
 version = "0.0.0-dev"
@@ -50,6 +50,9 @@ mail-builder = "=1.0.0"
 lettre = { version = "=0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "rustls", "ring", "webpki-roots", "builder", "hostname", "pool"] }
 html2text = "0.17.3"
 lru = "0.18.5"
+rrule = { version = "=0.14.0", default-features = false }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10.4"
 
 [profile.release]
 lto = true
