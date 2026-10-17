@@ -1,9 +1,9 @@
 use crate::error::{CalError, Result};
-use crate::ical::line::{Component, Property, unescape_text};
 use crate::ical::model::{
     Attendee, EventData, MyAddresses, Organizer, PartStat, When, normalize_address, when_list,
 };
 use chrono::Duration;
+use mcp_icloud_dav::line::{Component, Property, unescape_text};
 
 /// Parses a CalDAV resource and checks that it is a VCALENDAR.
 pub fn parse_resource(text: &str) -> Result<Component> {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/mcp-server-core", "crates/mcp-icloud-mail", "crates/mcp-icloud-calendar", "crates/mcp-icloud"]
+members = ["crates/mcp-server-core", "crates/mcp-icloud-dav", "crates/mcp-icloud-mail", "crates/mcp-icloud-calendar", "crates/mcp-icloud"]
 
 [workspace.package]
 version = "0.0.0-dev"

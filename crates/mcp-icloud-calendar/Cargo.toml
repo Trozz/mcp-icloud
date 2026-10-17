@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 mcp-server-core = { path = "../mcp-server-core" }
+mcp-icloud-dav = { path = "../mcp-icloud-dav" }
 thiserror.workspace = true
 secrecy.workspace = true
 url.workspace = true

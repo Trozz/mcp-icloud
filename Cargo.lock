@@ -1663,6 +1663,7 @@ dependencies = [
  "chrono-tz",
  "futures",
  "http-body-util",
+ "mcp-icloud-dav",
  "mcp-server-core",
  "metrics",
  "quick-xml",
@@ -1680,6 +1681,13 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "mcp-icloud-dav"
+version = "0.0.0-dev"
+dependencies = [
+ "thiserror 2.0.21",
 ]
 
 [[package]]

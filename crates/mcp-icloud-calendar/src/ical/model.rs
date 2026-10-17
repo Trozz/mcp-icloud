@@ -1,7 +1,7 @@
 use crate::error::{CalError, Result};
-use crate::ical::line::Property;
 use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
+use mcp_icloud_dav::line::Property;
 
 const DATE_FORMAT: &str = "%Y%m%d";
 const LOCAL_FORMAT: &str = "%Y%m%dT%H%M%S";
@@ -315,7 +315,7 @@ mod tests {
 
     fn prop(line: &str) -> Property {
         let cal =
-            crate::ical::line::Component::parse(&format!("BEGIN:VEVENT\n{line}\nEND:VEVENT\n"))
+            mcp_icloud_dav::line::Component::parse(&format!("BEGIN:VEVENT\n{line}\nEND:VEVENT\n"))
                 .unwrap();
         cal.properties[0].clone()
     }

@@ -8,7 +8,6 @@ use crate::ical::build::{
     EventPatch, Freq, NewAttendee, NewEvent, Recurrence, all_day_range, apply_patch_as,
     new_resource, set_attendees,
 };
-use crate::ical::line::Component;
 use crate::ical::model::{EventData, When};
 use crate::ical::parse::{event_from_component, master, master_mut, parse_resource};
 use crate::ical::recur::{
@@ -18,6 +17,7 @@ use crate::tz::parse_date;
 use crate::view::{event_fields, occurrence_in, occurrence_out, until_in, zoned};
 use chrono::{Duration, Utc};
 use chrono_tz::Tz;
+use mcp_icloud_dav::line::Component;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
