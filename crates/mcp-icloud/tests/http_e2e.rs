@@ -167,6 +167,32 @@ async fn mail_without_a_token_points_to_its_resource_metadata() {
 }
 
 #[tokio::test]
+async fn mail_sub_paths_are_guarded_too() {
+    let app = server(&[]);
+    let metadata = "Bearer resource_metadata=\"https://icloud.example.com/.well-known/oauth-protected-resource/mail\"";
+    for (path, token) in [
+        ("/mail/unknown", None),
+        ("/mail/x/y", None),
+        ("/mail/unknown", Some("not-a-valid-token")),
+        ("/mail", Some("not-a-valid-token")),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(rpc(path, initialize(), token, None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{path} {token:?}");
+        assert!(
+            res.headers()["www-authenticate"]
+                .to_str()
+                .unwrap()
+                .starts_with(metadata),
+            "{path} {token:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn old_mcp_path_is_not_served() {
     let res = server(&[])
         .oneshot(rpc("/mcp", initialize(), Some(TOKEN), None))
