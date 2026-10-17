@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::Instrument;
 
+pub mod groups;
 pub mod read;
 pub mod write;
 
@@ -31,7 +32,7 @@ impl ContactsServer {
     pub fn new(store: Arc<Store>) -> Self {
         Self {
             store,
-            tool_router: Self::read_router() + Self::write_router(),
+            tool_router: Self::read_router() + Self::write_router() + Self::group_router(),
         }
     }
 
