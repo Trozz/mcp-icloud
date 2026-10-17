@@ -564,10 +564,14 @@ impl CalendarServer {
 impl ServerHandler for CalendarServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                crate::config::SERVICE_NAME,
-                crate::VERSION,
-            ))
+            .with_server_info(
+                Implementation::new(crate::config::SERVICE_NAME, crate::VERSION).with_icons(
+                    mcp_server_core::service::icons(
+                        include_bytes!("../../assets/icon.png"),
+                        include_str!("../../assets/icon.svg"),
+                    ),
+                ),
+            )
             .with_instructions(INSTRUCTIONS)
     }
 }

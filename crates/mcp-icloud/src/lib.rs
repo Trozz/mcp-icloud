@@ -91,8 +91,8 @@ pub fn load(env: &mut ServiceEnv, registry: &[(&'static str, ServiceFactory)]) -
     })
 }
 
-/// The full HTTP application: health, OAuth routes and each service at `/<name>`, every service
-/// its own OAuth protected resource.
+/// The full HTTP application: health, favicon, OAuth routes and each service at `/<name>`, every
+/// service its own OAuth protected resource.
 pub fn app(
     oauth: OAuthSettings,
     services: &[Arc<dyn Service>],
@@ -104,7 +104,15 @@ pub fn app(
         .iter()
         .map(|s| (s.name(), s.clone().router(ctx)))
         .collect();
-    build_app(auth, routers)
+    build_app(auth, routers).route(
+        "/favicon.ico",
+        axum::routing::get(|| async {
+            (
+                [(axum::http::header::CONTENT_TYPE, "image/png")],
+                include_bytes!("../assets/favicon.png").as_slice(),
+            )
+        }),
+    )
 }
 
 /// Drops any user directive for a capped target and caps it at info: some dependencies log

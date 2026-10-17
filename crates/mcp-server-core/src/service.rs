@@ -1,6 +1,9 @@
 use crate::config::{CoreConfig, EnvReader};
 use crate::server::BODY_LIMIT;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use rmcp::ServerHandler;
+use rmcp::model::Icon;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use std::sync::Arc;
@@ -96,9 +99,42 @@ where
     axum::Router::new().fallback_service(service)
 }
 
+/// A service's `serverInfo` icons as data URIs: the 128x128 PNG first, then the SVG.
+pub fn icons(png: &[u8], svg: &str) -> Vec<Icon> {
+    vec![
+        Icon::new(format!("data:image/png;base64,{}", STANDARD.encode(png)))
+            .with_mime_type("image/png")
+            .with_sizes(vec!["128x128".into()]),
+        Icon::new(format!(
+            "data:image/svg+xml;base64,{}",
+            STANDARD.encode(svg)
+        ))
+        .with_mime_type("image/svg+xml")
+        .with_sizes(vec!["any".into()]),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icons_are_png_then_svg_data_uris() {
+        let icons = icons(b"png-bytes", "<svg/>");
+        assert_eq!(icons.len(), 2);
+        assert_eq!(
+            icons[0].src,
+            format!("data:image/png;base64,{}", STANDARD.encode(b"png-bytes"))
+        );
+        assert_eq!(icons[0].mime_type.as_deref(), Some("image/png"));
+        assert_eq!(icons[0].sizes, Some(vec!["128x128".to_string()]));
+        assert_eq!(
+            icons[1].src,
+            format!("data:image/svg+xml;base64,{}", STANDARD.encode("<svg/>"))
+        );
+        assert_eq!(icons[1].mime_type.as_deref(), Some("image/svg+xml"));
+        assert_eq!(icons[1].sizes, Some(vec!["any".to_string()]));
+    }
 
     #[test]
     fn origin_gets_explicit_default_port() {

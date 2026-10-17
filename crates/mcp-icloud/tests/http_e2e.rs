@@ -305,3 +305,49 @@ async fn calendar_metadata_and_selection() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn each_service_sends_its_own_icons() {
+    let app = server(&[]);
+    let mut seen = Vec::new();
+    for path in ["/mail", "/calendar"] {
+        let res = app
+            .clone()
+            .oneshot(rpc(path, initialize(), Some(TOKEN), None))
+            .await
+            .unwrap();
+        let init = rpc_message(res).await;
+        let icons = init["result"]["serverInfo"]["icons"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{path} has no icons"))
+            .clone();
+        assert_eq!(icons.len(), 2, "{path}");
+        assert!(
+            icons[0]["src"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+        assert_eq!(icons[0]["mimeType"], "image/png");
+        assert!(
+            icons[1]["src"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/svg+xml;base64,")
+        );
+        seen.push(icons[0]["src"].clone());
+    }
+    assert_ne!(seen[0], seen[1], "mail and calendar share an icon");
+}
+
+#[tokio::test]
+async fn favicon_needs_no_auth() {
+    let res = server(&[])
+        .oneshot(Request::get("/favicon.ico").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["content-type"], "image/png");
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
