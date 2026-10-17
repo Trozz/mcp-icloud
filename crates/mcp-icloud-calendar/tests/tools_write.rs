@@ -338,6 +338,91 @@ async fn update_this_and_following_splits_the_series() {
 }
 
 #[tokio::test]
+async fn moving_a_series_start_is_refused_when_occurrences_were_removed_or_changed() {
+    let fake = fake().await;
+    let s = server(&fake, false);
+    let id = "/1234567890/calendars/work/standup-1.ics";
+    let before = body(&fake, "work", "standup-1.ics");
+    let e = error_text(
+        &s.update_event(params(json!({"event_id": id, "start": "2026-10-06T09:00"})))
+            .await
+            .unwrap(),
+    );
+    assert!(e.contains("start cannot be moved"), "{e}");
+    let e = error_text(
+        &s.update_event(params(json!({
+            "event_id": id,
+            "scope": "this_and_following",
+            "occurrence_start": "2026-10-12T09:00:00+01:00",
+            "start": "2026-10-13T09:00"
+        })))
+        .await
+        .unwrap(),
+    );
+    assert!(e.contains("start cannot be moved"), "{e}");
+    {
+        let st = fake.state();
+        assert_eq!(st.count("PUT") + st.count("DELETE"), 0);
+    }
+    assert_eq!(body(&fake, "work", "standup-1.ics"), before);
+    json(
+        &s.update_event(params(json!({
+            "event_id": id,
+            "start": "2026-10-05T09:00",
+            "end": "2026-10-05T09:30"
+        })))
+        .await
+        .unwrap(),
+    );
+}
+
+#[tokio::test]
+async fn moving_the_start_of_the_following_occurrences_works_without_exceptions() {
+    let fake = fake().await;
+    let v = json(
+        &server(&fake, false)
+            .update_event(params(json!({
+                "event_id": "/1234567890/calendars/work/standup-1.ics",
+                "scope": "this_and_following",
+                "occurrence_start": "2026-11-02T09:00:00+00:00",
+                "start": "2026-11-02T10:00"
+            })))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(v["start"], "2026-11-02T10:00:00+00:00");
+    assert_eq!(
+        summaries(&fake, "2026-10-26", "2026-11-10").await,
+        [
+            "2026-10-26T10:00:00+00:00 Standup (late)",
+            "2026-11-02T10:00:00+00:00 Standup",
+            "2026-11-09T10:00:00+00:00 Standup"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn received_invitations_are_never_split() {
+    let fake = fake().await;
+    let e = error_text(
+        &server(&fake, true)
+            .update_event(params(json!({
+                "event_id": "/1234567890/calendars/work/invite-1.ics",
+                "scope": "this_and_following",
+                "occurrence_start": "2026-10-21T13:00:00+00:00",
+                "alerts_minutes_before": [10]
+            })))
+            .await
+            .unwrap(),
+    );
+    assert!(e.contains("invitation from olive@example.net"), "{e}");
+    assert!(e.contains("this_and_following"), "{e}");
+    let st = fake.state();
+    assert_eq!(st.count("PUT") + st.count("DELETE"), 0);
+    assert_eq!(st.resource_names("work").len(), 3);
+}
+
+#[tokio::test]
 async fn received_invitations_only_accept_alert_changes() {
     let fake = fake().await;
     let s = server(&fake, false);

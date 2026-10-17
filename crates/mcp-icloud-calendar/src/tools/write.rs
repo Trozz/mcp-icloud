@@ -236,6 +236,35 @@ fn occurrence_needed(scope: Scope, occurrence_start: Option<&str>) -> error::Res
     }
 }
 
+/// Moving a series start shifts the generated occurrences, but EXDATE, RDATE and the
+/// RECURRENCE-IDs of overrides stay where they were, so removed occurrences would come back and
+/// changed ones would show twice. Refuse that instead of rewriting them.
+fn guard_series_move(cal: &Component, patch: &EventPatch, zone: Tz) -> error::Result<()> {
+    let Some(new_start) = &patch.start else {
+        return Ok(());
+    };
+    let Some(m) = master(cal) else {
+        return Ok(());
+    };
+    let unchanged = m
+        .prop("DTSTART")
+        .and_then(|p| When::from_property(p).ok())
+        .is_some_and(|s| {
+            s.is_date() == new_start.is_date() && s.instant(zone) == new_start.instant(zone)
+        });
+    let exceptions = m.prop("EXDATE").is_some()
+        || m.prop("RDATE").is_some()
+        || cal
+            .children("VEVENT")
+            .any(|c| c.prop("RECURRENCE-ID").is_some());
+    if unchanged || !exceptions {
+        return Ok(());
+    }
+    Err(CalError::invalid(
+        "this series has removed or changed occurrences, so its start cannot be moved; move single occurrences with scope occurrence instead",
+    ))
+}
+
 /// A resource fetched for writing.
 pub(crate) struct Editing {
     pub url: Url,
@@ -280,15 +309,23 @@ impl CalendarServer {
         Ok(())
     }
 
-    /// An invitation from someone else: only my own alerts may change.
+    /// An invitation from someone else: only my own alerts may change, and never by splitting
+    /// the series (that would write a new copy of their invitation).
     fn guard_received(
         ev: &EventData,
         patch: &EventPatch,
         attendees_change: bool,
+        scope: Scope,
     ) -> error::Result<()> {
         let Some(org) = ev.organizer.as_ref().filter(|o| !o.is_me) else {
             return Ok(());
         };
+        if scope == Scope::ThisAndFollowing {
+            return Err(CalError::invalid(format!(
+                "this is an invitation from {}; scope this_and_following would copy it into a new event, so change alerts with scope series or occurrence",
+                org.email
+            )));
+        }
         let only_alerts = EventPatch {
             alerts_minutes_before: None,
             ..patch.clone()
@@ -427,7 +464,7 @@ impl CalendarServer {
             ));
         }
         self.guard(&e.master, attendees.is_some())?;
-        Self::guard_received(&e.master, &patch, attendees.is_some())?;
+        Self::guard_received(&e.master, &patch, attendees.is_some(), scope)?;
         let client = self.dir.client();
         let mut out = serde_json::Map::new();
         out.insert("updated".into(), json!(true));
@@ -435,6 +472,7 @@ impl CalendarServer {
         out.insert("event_id".into(), json!(Account::event_id(&e.url)));
         let changed = match occurrence {
             None => {
+                guard_series_move(&e.ical, &patch, zone)?;
                 let m = master_mut(&mut e.ical).expect("checked in load");
                 self.edit(m, &patch, attendees, &account.me, zone)?;
                 event_from_component(m, &account.me)?
@@ -451,6 +489,7 @@ impl CalendarServer {
                 let uid = new_uid();
                 let split = split_series(&mut e.ical, &rid, &uid, Utc::now(), zone)?;
                 let mut series = split.new_series;
+                guard_series_move(&series, &patch, zone)?;
                 let m = master_mut(&mut series)
                     .ok_or_else(|| CalError::Internal("split series has no VEVENT".into()))?;
                 self.edit(m, &patch, attendees, &account.me, zone)?;
