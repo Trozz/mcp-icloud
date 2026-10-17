@@ -27,7 +27,7 @@ commit_parsers = [
     { message = "^Merge", skip = true },
 ]
 filter_commits = false
-tag_pattern = "mail-v[0-9].*"
+tag_pattern = "v[0-9].*"
 ignore_tags = "-dev\\."
 topo_order = false
 sort_commits = "oldest"

@@ -44,17 +44,23 @@ echo a > crates/mcp-icloud-mail/a.rs
 git add .
 git commit -qm "feat: initial"
 
-check "no tags: no stable tag" "" "$(latest_stable_tag mail)"
+check "no tags: no stable tag" "" "$(latest_stable_tag v)"
 out="$(BRANCH=main PR_TITLE='' PR_LABELS='' GITHUB_OUTPUT=/dev/null main)"
 check "no tags: version 0.0.1" 0.0.1 "$(field version "$out")"
 check "no tags: release" true "$(field release "$out")"
 check "no tags: empty range" "" "$(field range "$out")"
-check "no tags: tag name" mail-v0.0.1 "$(field tag "$out")"
+check "no tags: tag name" v0.0.1 "$(field tag "$out")"
 
-git tag mail-v1.4.2
-git tag mail-v1.5.0-dev.7
+git tag mail-v0.0.1-dev.1
+git tag mail-v7.0.0
+out="$(BRANCH=main PR_TITLE='' PR_LABELS='' GITHUB_OUTPUT=/dev/null main)"
+check "old mail- tags are ignored" v0.0.1 "$(field tag "$out")"
+check "old mail- tags give no previous" "" "$(field previous "$out")"
+
+git tag v1.4.2
+git tag v1.5.0-dev.7
 git tag calendar-v9.0.0
-check "stable tag excludes dev and other prefixes" mail-v1.4.2 "$(latest_stable_tag mail)"
+check "stable tag excludes dev and other prefixes" v1.4.2 "$(latest_stable_tag v)"
 
 echo docs > docs/readme.md
 git add docs
@@ -68,14 +74,25 @@ git commit -qm "fix: change"
 out="$(BRANCH=main PR_TITLE='Release' PR_LABELS='minor,major' GITHUB_OUTPUT=/dev/null main)"
 check "conflicting labels pick major" 2.0.0 "$(field version "$out")"
 check "crate change: release" true "$(field release "$out")"
-check "range from last stable" "mail-v1.4.2..HEAD" "$(field range "$out")"
-check "previous stable" mail-v1.4.2 "$(field previous "$out")"
+check "range from last stable" "v1.4.2..HEAD" "$(field range "$out")"
+check "previous stable" v1.4.2 "$(field previous "$out")"
 
 out="$(BRANCH=develop RUN_NUMBER=12 PR_TITLE='' PR_LABELS='' GITHUB_OUTPUT=/dev/null main)"
 check "develop pre-release" 1.4.3-dev.12 "$(field version "$out")"
-check "develop tag" mail-v1.4.3-dev.12 "$(field tag "$out")"
+check "develop tag" v1.4.3-dev.12 "$(field tag "$out")"
 
-git tag mail-v1.4.3
+mkdir -p crates/mcp-icloud
+echo c > crates/mcp-icloud/main.rs
+git add crates
+git commit -qm "feat: other crate"
+git tag v1.4.3-dev.13
+echo d > crates/mcp-icloud/main.rs
+git add crates
+git commit -qm "fix: any crate change releases"
+out="$(BRANCH=develop RUN_NUMBER=14 PR_TITLE='' PR_LABELS='' GITHUB_OUTPUT=/dev/null main)"
+check "any crate change releases on develop" true "$(field release "$out")"
+
+git tag v1.4.3
 out="$(BRANCH=main PR_TITLE='' PR_LABELS='' GITHUB_OUTPUT=/dev/null main)"
 check "existing tag: no release" false "$(field release "$out")"
 
