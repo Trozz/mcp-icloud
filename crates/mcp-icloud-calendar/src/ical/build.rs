@@ -1,9 +1,9 @@
 use crate::error::{CalError, Result};
-use crate::ical::line::{Component, Property, escape_text};
 use crate::ical::model::{MyAddresses, PartStat, When, normalize_address};
 use crate::ical::parse::{address_of, event_from_component};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
+use mcp_icloud_dav::line::{Component, Property, escape_text};
 
 pub const PRODID: &str = "-//Trozz//mcp-icloud//EN";
 pub const MAX_ALERT_MINUTES: i64 = 4 * 7 * 24 * 60;
@@ -521,11 +521,11 @@ pub fn stamp(now: DateTime<Utc>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ical::line::unfold;
     use crate::ical::model::When;
     use crate::ical::parse::{events, master, parse_resource};
     use chrono::NaiveDateTime;
     use chrono_tz::Europe;
+    use mcp_icloud_dav::line::unfold;
 
     const APPLE: &str = include_str!("../../tests/fixtures/apple-allday.ics");
     const GOOGLE: &str = include_str!("../../tests/fixtures/google-invite.ics");

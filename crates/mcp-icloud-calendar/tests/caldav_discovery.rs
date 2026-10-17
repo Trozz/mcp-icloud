@@ -1,13 +1,14 @@
 //! Discovery against the in-memory CalDAV fake.
 mod support;
-use mcp_icloud_calendar::caldav::client::{CaldavClient, CaldavSettings};
+use mcp_icloud_calendar::caldav::caldav_settings;
 use mcp_icloud_calendar::caldav::discovery::{Directory, discover};
+use mcp_icloud_dav::client::DavClient;
 use secrecy::SecretString;
 use std::sync::Arc;
 use support::fake_caldav::{EMAIL, FakeCalDav, FakeState, HOME, PASSWORD};
 
-fn client(fake: &FakeCalDav, password: &str) -> CaldavClient {
-    CaldavClient::new(CaldavSettings::new(
+fn client(fake: &FakeCalDav, password: &str) -> DavClient {
+    DavClient::new(caldav_settings(
         fake.url.clone(),
         EMAIL.into(),
         SecretString::from(password.to_string()),

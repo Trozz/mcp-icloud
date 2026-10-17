@@ -3,8 +3,9 @@
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use mcp_icloud_calendar::caldav::client::{CaldavClient, CaldavSettings};
+use mcp_icloud_calendar::caldav::caldav_settings;
 use mcp_icloud_calendar::caldav::discovery::{Directory, discover};
+use mcp_icloud_dav::client::DavClient;
 use secrecy::SecretString;
 use std::sync::{Arc, Mutex};
 use url::Url;
@@ -62,8 +63,8 @@ async fn handle(State(dav): State<Arc<Mutex<Dav>>>, uri: Uri, headers: HeaderMap
     (StatusCode::MULTI_STATUS, body).into_response()
 }
 
-fn client(base: &Url) -> CaldavClient {
-    CaldavClient::new(CaldavSettings::new(
+fn client(base: &Url) -> DavClient {
+    DavClient::new(caldav_settings(
         base.clone(),
         "user@example.com".into(),
         SecretString::from("app-pass"),

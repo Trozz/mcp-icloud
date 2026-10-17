@@ -24,8 +24,9 @@ fn server(extra: &[(&str, &str)]) -> axum::Router {
         ("INSECURE_HTTP", "true"),
         ("ICLOUD_EMAIL", "me@icloud.com"),
         ("ICLOUD_APP_PASSWORD", "abcd-efgh-ijkl-mnop"),
-        // The calendar service starts discovery when mounted; keep it off the network.
+        // The calendar and contacts services start discovery when mounted; keep them off the network.
         ("CALDAV_URL", "http://127.0.0.1:9"),
+        ("CARDDAV_URL", "http://127.0.0.1:9"),
     ]
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -310,7 +311,7 @@ async fn calendar_metadata_and_selection() {
 async fn each_service_sends_its_own_icons() {
     let app = server(&[]);
     let mut seen = Vec::new();
-    for path in ["/mail", "/calendar"] {
+    for path in ["/mail", "/calendar", "/contacts"] {
         let res = app
             .clone()
             .oneshot(rpc(path, initialize(), Some(TOKEN), None))
@@ -338,6 +339,8 @@ async fn each_service_sends_its_own_icons() {
         seen.push(icons[0]["src"].clone());
     }
     assert_ne!(seen[0], seen[1], "mail and calendar share an icon");
+    assert_ne!(seen[0], seen[2], "mail and contacts share an icon");
+    assert_ne!(seen[1], seen[2], "calendar and contacts share an icon");
 }
 
 #[tokio::test]
@@ -350,4 +353,98 @@ async fn favicon_needs_no_auth() {
     assert_eq!(res.headers()["content-type"], "image/png");
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert!(body.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[tokio::test]
+async fn contacts_is_served_at_its_path_with_ten_tools() {
+    let app = server(&[]);
+    let res = app
+        .clone()
+        .oneshot(rpc("/contacts", initialize(), Some(TOKEN), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let session = res.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let init = rpc_message(res).await;
+    assert_eq!(init["result"]["serverInfo"]["name"], "mcp-icloud-contacts");
+    let res = app
+        .clone()
+        .oneshot(rpc(
+            "/contacts",
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            Some(TOKEN),
+            Some(&session),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    let res = app
+        .oneshot(rpc(
+            "/contacts",
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+            Some(TOKEN),
+            Some(&session),
+        ))
+        .await
+        .unwrap();
+    let list = rpc_message(res).await;
+    let tools = list["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 10, "{tools:?}");
+}
+
+#[tokio::test]
+async fn contacts_has_its_own_resource_metadata_and_challenge() {
+    let app = server(&[]);
+    let res = app
+        .clone()
+        .oneshot(rpc("/contacts", initialize(), None, None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        res.headers()["www-authenticate"].to_str().unwrap(),
+        "Bearer resource_metadata=\"https://icloud.example.com/.well-known/oauth-protected-resource/contacts\""
+    );
+    let res = app
+        .oneshot(
+            Request::get("/.well-known/oauth-protected-resource/contacts")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["resource"], "https://icloud.example.com/contacts");
+    assert_eq!(v["scopes_supported"], json!(["contacts"]));
+}
+
+#[tokio::test]
+async fn a_mail_token_is_rejected_on_contacts() {
+    let app = server(&[]);
+    let res = app
+        .clone()
+        .oneshot(rpc(
+            "/contacts",
+            initialize(),
+            Some(&access_token_for("mail")),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let res = app
+        .oneshot(rpc(
+            "/contacts",
+            initialize(),
+            Some(&access_token_for("contacts")),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }

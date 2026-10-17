@@ -8,11 +8,12 @@
 //! only prints counts, never event content.
 mod support;
 use futures::FutureExt;
-use mcp_icloud_calendar::caldav::client::{CaldavClient, CaldavSettings};
+use mcp_icloud_calendar::caldav::caldav_settings;
 use mcp_icloud_calendar::caldav::discovery::Directory;
 use mcp_icloud_calendar::config::DEFAULT_CALDAV_URL;
 use mcp_icloud_calendar::tools::{CalendarServer, ToolSettings};
 use mcp_icloud_calendar::tz::ZoneState;
+use mcp_icloud_dav::client::DavClient;
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use std::panic::AssertUnwindSafe;
@@ -30,7 +31,7 @@ fn directory() -> Arc<Directory> {
     let email = env("ICLOUD_EMAIL").expect("set ICLOUD_EMAIL to run the live tests");
     let password =
         env("ICLOUD_APP_PASSWORD").expect("set ICLOUD_APP_PASSWORD to run the live tests");
-    let client = CaldavClient::new(CaldavSettings::new(
+    let client = DavClient::new(caldav_settings(
         Url::parse(DEFAULT_CALDAV_URL).unwrap(),
         email.clone(),
         SecretString::from(password),

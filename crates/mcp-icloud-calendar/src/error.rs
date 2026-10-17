@@ -39,6 +39,21 @@ impl CalError {
     }
 }
 
+impl From<mcp_icloud_dav::DavError> for CalError {
+    fn from(e: mcp_icloud_dav::DavError) -> Self {
+        use mcp_icloud_dav::DavError;
+        match e {
+            DavError::Auth => CalError::Auth,
+            DavError::Forbidden(path) => CalError::ReadOnly(path),
+            DavError::NotFound(path) => CalError::NotFound(path),
+            DavError::Conflict => CalError::Conflict,
+            DavError::Quota => CalError::Quota,
+            DavError::Upstream(msg) => CalError::Upstream(msg),
+            DavError::Internal(msg) => CalError::Internal(msg),
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, CalError>;
 
 #[cfg(test)]
@@ -60,6 +75,36 @@ mod tests {
         for (e, kind) in all {
             assert_eq!(e.kind(), kind);
         }
+    }
+
+    #[test]
+    fn dav_errors_keep_their_kind_and_text() {
+        use mcp_icloud_dav::DavError;
+        for e in [
+            DavError::Auth,
+            DavError::Forbidden("/1234567890/calendars/home/".into()),
+            DavError::NotFound("/1234567890/calendars/home/x.ics".into()),
+            DavError::Conflict,
+            DavError::Quota,
+            DavError::Upstream("GET /x returned HTTP 500".into()),
+            DavError::Internal("bug".into()),
+        ] {
+            let kind = e.kind();
+            assert_eq!(CalError::from(e).kind(), kind);
+        }
+        assert_eq!(
+            CalError::from(DavError::Forbidden("calendar \"Home\"".into())).to_string(),
+            "calendar \"Home\" is read-only"
+        );
+        assert_eq!(
+            CalError::from(DavError::Upstream("GET /x returned HTTP 500".into())).to_string(),
+            "iCloud error: GET /x returned HTTP 500"
+        );
+        assert!(
+            CalError::from(DavError::Auth)
+                .to_string()
+                .contains("app-specific password")
+        );
     }
 
     #[test]

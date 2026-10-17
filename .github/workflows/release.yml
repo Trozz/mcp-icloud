@@ -108,10 +108,10 @@ jobs:
 
           ### Connect
 
-          Each service is its own MCP server at \`https://<your PUBLIC_URL host>/<service>\`: mail at \`/mail\`, calendar at \`/calendar\`. Set \`ICLOUD_SERVICES\` to run only some of them.
+          Each service is its own MCP server at \`https://<your PUBLIC_URL host>/<service>\`: mail at \`/mail\`, calendar at \`/calendar\`, contacts at \`/contacts\`. Set \`ICLOUD_SERVICES\` to run only some of them.
 
-          - claude.ai: add one custom connector per service (\`https://<your PUBLIC_URL host>/mail\`, \`https://<your PUBLIC_URL host>/calendar\`) and sign in with \`OAUTH_ADMIN_PASSWORD\`.
-          - Claude Code: \`claude mcp add --transport http icloud-mail https://<host>/mail --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\` and \`claude mcp add --transport http icloud-calendar https://<host>/calendar --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\`
+          - claude.ai: add one custom connector per service (\`https://<your PUBLIC_URL host>/mail\`, \`https://<your PUBLIC_URL host>/calendar\`, \`https://<your PUBLIC_URL host>/contacts\`) and sign in with \`OAUTH_ADMIN_PASSWORD\`.
+          - Claude Code: \`claude mcp add --transport http icloud-mail https://<host>/mail --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\`, \`claude mcp add --transport http icloud-calendar https://<host>/calendar --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\` and \`claude mcp add --transport http icloud-contacts https://<host>/contacts --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\`
 
           Upgrading from mcp-icloud-mail: mail moved from \`/mcp\` to \`/mail\`; re-add the connector.
 

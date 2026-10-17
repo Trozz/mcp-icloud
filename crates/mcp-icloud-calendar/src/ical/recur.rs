@@ -4,11 +4,11 @@
 
 use crate::error::{CalError, Result};
 use crate::ical::build::{PRODID, stamp, touch};
-use crate::ical::line::{Component, Property};
 use crate::ical::model::{EventData, MyAddresses, When};
 use crate::ical::parse::{event_from_component, master, master_mut};
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
+use mcp_icloud_dav::line::{Component, Property};
 
 pub const MAX_OCCURRENCES: usize = 500;
 

@@ -1,8 +1,8 @@
-//! Thin CalDAV-over-HTTP client: Basic auth scoped to trusted origins, manual redirects,
+//! Thin CalDAV/CardDAV-over-HTTP client: Basic auth scoped to trusted origins, manual redirects,
 //! timeouts, one retry for safe methods, status mapping and metrics.
 
-use crate::caldav::xml::{DavResponse, parse_multistatus};
-use crate::error::{CalError, Result};
+use crate::error::{DavError, Result};
+use crate::xml::{DavResponse, Multistatus, parse_multistatus, parse_sync_report};
 use mcp_server_core::observability::content_logging_enabled;
 use reqwest::header::{CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, LOCATION};
 use reqwest::{Method, StatusCode};
@@ -14,11 +14,61 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_REDIRECTS: usize = 5;
 
-pub struct CaldavSettings {
-    /// `CALDAV_URL`: where discovery starts. Also decides which origins are trusted.
+/// Which protocol a client speaks: decides the PUT content type, metric names and log labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    CalDav,
+    CardDav,
+}
+
+impl Protocol {
+    /// `caldav` or `carddav`: the metric name prefix and the `protocol` field of debug logs.
+    pub fn name(self) -> &'static str {
+        match self {
+            Protocol::CalDav => "caldav",
+            Protocol::CardDav => "carddav",
+        }
+    }
+
+    /// The Content-Type of a PUT body.
+    pub fn content_type(self) -> &'static str {
+        match self {
+            Protocol::CalDav => "text/calendar; charset=utf-8",
+            Protocol::CardDav => "text/vcard; charset=utf-8",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Protocol::CalDav => "CalDAV",
+            Protocol::CardDav => "CardDAV",
+        }
+    }
+
+    fn requests_metric(self) -> &'static str {
+        match self {
+            Protocol::CalDav => "caldav_requests_total",
+            Protocol::CardDav => "carddav_requests_total",
+        }
+    }
+
+    fn duration_metric(self) -> &'static str {
+        match self {
+            Protocol::CalDav => "caldav_request_duration_seconds",
+            Protocol::CardDav => "carddav_request_duration_seconds",
+        }
+    }
+}
+
+pub struct DavSettings {
+    pub protocol: Protocol,
+    /// `CALDAV_URL` or `CARDDAV_URL`: where discovery starts. Also decides which origins are
+    /// trusted.
     pub base: Url,
     pub username: String,
     pub password: SecretString,
+    /// For example `mcp-icloud-calendar/1.2.3`.
+    pub user_agent: String,
     pub connect_timeout: Duration,
     pub request_timeout: Duration,
     /// Always log request and response bodies at debug level. Without it, bodies are logged only
@@ -27,12 +77,20 @@ pub struct CaldavSettings {
     pub log_bodies: bool,
 }
 
-impl CaldavSettings {
-    pub fn new(base: Url, username: String, password: SecretString) -> Self {
-        CaldavSettings {
+impl DavSettings {
+    pub fn new(
+        protocol: Protocol,
+        base: Url,
+        username: String,
+        password: SecretString,
+        user_agent: String,
+    ) -> Self {
+        DavSettings {
+            protocol,
             base,
             username,
             password,
+            user_agent,
             connect_timeout: CONNECT_TIMEOUT,
             request_timeout: REQUEST_TIMEOUT,
             log_bodies: false,
@@ -61,9 +119,9 @@ struct Raw {
     body: String,
 }
 
-pub struct CaldavClient {
+pub struct DavClient {
     http: reqwest::Client,
-    settings: CaldavSettings,
+    settings: DavSettings,
 }
 
 fn is_icloud_host(host: &str) -> bool {
@@ -86,30 +144,34 @@ fn map_status(method: &Method, url: &Url, status: StatusCode) -> Result<()> {
     }
     let path = url.path().to_string();
     Err(match status.as_u16() {
-        401 => CalError::Auth,
-        403 => CalError::ReadOnly(path),
-        404 => CalError::NotFound(path),
-        412 => CalError::Conflict,
-        413 | 507 => CalError::Quota,
-        code => CalError::Upstream(format!("{method} {path} returned HTTP {code}")),
+        401 => DavError::Auth,
+        403 => DavError::Forbidden(path),
+        404 => DavError::NotFound(path),
+        412 => DavError::Conflict,
+        413 | 507 => DavError::Quota,
+        code => DavError::Upstream(format!("{method} {path} returned HTTP {code}")),
     })
 }
 
-impl CaldavClient {
-    pub fn new(settings: CaldavSettings) -> Result<Self> {
+impl DavClient {
+    pub fn new(settings: DavSettings) -> Result<Self> {
         mcp_server_core::install_crypto_provider();
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(settings.connect_timeout)
             .timeout(settings.request_timeout)
-            .user_agent(format!("mcp-icloud-calendar/{}", crate::VERSION))
+            .user_agent(settings.user_agent.clone())
             .build()
-            .map_err(|e| CalError::Internal(format!("building the HTTP client failed: {e}")))?;
-        Ok(CaldavClient { http, settings })
+            .map_err(|e| DavError::Internal(format!("building the HTTP client failed: {e}")))?;
+        Ok(DavClient { http, settings })
     }
 
     pub fn base(&self) -> &Url {
         &self.settings.base
+    }
+
+    pub fn protocol(&self) -> Protocol {
+        self.settings.protocol
     }
 
     fn log_bodies(&self) -> bool {
@@ -148,13 +210,24 @@ impl CaldavClient {
         Ok((raw.url, parse_multistatus(&raw.body)?))
     }
 
-    /// REPORT with `Depth: 1` (calendar-query).
+    /// REPORT with `Depth: 1` (calendar-query, addressbook-multiget).
     pub async fn report(&self, url: &Url, body: String) -> Result<Vec<DavResponse>> {
+        let raw = self.send_report(url, body).await?;
+        parse_multistatus(&raw.body)
+    }
+
+    /// REPORT with `Depth: 1`, keeping the top-level `sync-token` (sync-collection). An invalid
+    /// token is HTTP 412, so `DavError::Conflict`.
+    pub async fn sync_report(&self, url: &Url, body: String) -> Result<Multistatus> {
+        let raw = self.send_report(url, body).await?;
+        parse_sync_report(&raw.body)
+    }
+
+    async fn send_report(&self, url: &Url, body: String) -> Result<Raw> {
         let method = Method::from_bytes(b"REPORT").expect("valid method");
         let mut headers = HeaderMap::new();
         headers.insert("Depth", HeaderValue::from_static("1"));
-        let raw = self.send(method, url, headers, Some(body), true).await?;
-        parse_multistatus(&raw.body)
+        self.send(method, url, headers, Some(body), true).await
     }
 
     pub async fn get(&self, url: &Url) -> Result<Fetched> {
@@ -168,17 +241,17 @@ impl CaldavClient {
         })
     }
 
-    /// PUT an iCalendar resource; returns the new ETag when the server sends one.
+    /// PUT an iCalendar or vCard resource; returns the new ETag when the server sends one.
     pub async fn put(&self, url: &Url, body: String, pre: Precondition) -> Result<Option<String>> {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONTENT_TYPE,
-            HeaderValue::from_static("text/calendar; charset=utf-8"),
+            HeaderValue::from_static(self.settings.protocol.content_type()),
         );
         match pre {
             Precondition::IfMatch(etag) => {
                 let v = HeaderValue::from_str(&etag)
-                    .map_err(|_| CalError::Upstream("invalid ETag from server".into()))?;
+                    .map_err(|_| DavError::Upstream("invalid ETag from server".into()))?;
                 headers.insert("If-Match", v);
             }
             Precondition::IfNoneMatch => {
@@ -195,7 +268,7 @@ impl CaldavClient {
     pub async fn delete(&self, url: &Url, etag: &str) -> Result<()> {
         let mut headers = HeaderMap::new();
         let v = HeaderValue::from_str(etag)
-            .map_err(|_| CalError::Upstream("invalid ETag from server".into()))?;
+            .map_err(|_| DavError::Upstream("invalid ETag from server".into()))?;
         headers.insert("If-Match", v);
         self.send(Method::DELETE, url, headers, None, false).await?;
         Ok(())
@@ -209,14 +282,16 @@ impl CaldavClient {
         body: Option<String>,
         retry: bool,
     ) -> Result<Raw> {
+        let protocol = self.settings.protocol;
         let mut url = url.clone();
         let mut hops = 0;
         let mut retried = false;
         loop {
             if !self.is_trusted(&url) {
-                return Err(CalError::Upstream(format!(
-                    "refusing to contact {} (not a trusted CalDAV origin)",
-                    url.origin().ascii_serialization()
+                return Err(DavError::Upstream(format!(
+                    "refusing to contact {} (not a trusted {} origin)",
+                    url.origin().ascii_serialization(),
+                    protocol.label()
                 )));
             }
             let (status, outcome) = self.attempt(&method, &url, &headers, &body).await;
@@ -228,7 +303,7 @@ impl CaldavClient {
                     continue;
                 }
                 Err(e) => {
-                    return Err(CalError::Upstream(format!(
+                    return Err(DavError::Upstream(format!(
                         "{method} {} failed: {e}",
                         url.path()
                     )));
@@ -250,7 +325,7 @@ impl CaldavClient {
             {
                 hops += 1;
                 if hops > MAX_REDIRECTS {
-                    return Err(CalError::Upstream(format!(
+                    return Err(DavError::Upstream(format!(
                         "too many redirects from {}",
                         url.path()
                     )));
@@ -259,7 +334,7 @@ impl CaldavClient {
                     .to_str()
                     .ok()
                     .and_then(|l| url.join(l).ok())
-                    .ok_or_else(|| CalError::Upstream("invalid redirect location".into()))?;
+                    .ok_or_else(|| DavError::Upstream("invalid redirect location".into()))?;
                 tracing::debug!(from = url.path(), to = %location.origin().ascii_serialization(), "redirect");
                 url = location;
                 continue;
@@ -270,10 +345,10 @@ impl CaldavClient {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
             let text = response.text().await.map_err(|e| {
-                CalError::Upstream(format!("reading {method} {} failed: {e}", url.path()))
+                DavError::Upstream(format!("reading {method} {} failed: {e}", url.path()))
             })?;
             if self.log_bodies() {
-                tracing::debug!(method = %method, path = url.path(), status = status.as_u16(), body = %text, "caldav response");
+                tracing::debug!(protocol = protocol.name(), method = %method, path = url.path(), status = status.as_u16(), body = %text, "{} response", protocol.name());
             }
             map_status(&method, &url, status)?;
             return Ok(Raw {
@@ -294,6 +369,7 @@ impl CaldavClient {
         Option<StatusCode>,
         std::result::Result<reqwest::Response, reqwest::Error>,
     ) {
+        let protocol = self.settings.protocol;
         let mut req = self
             .http
             .request(method.clone(), url.clone())
@@ -304,7 +380,7 @@ impl CaldavClient {
             );
         if let Some(b) = body {
             if self.log_bodies() {
-                tracing::debug!(method = %method, path = url.path(), body = %b, "caldav request");
+                tracing::debug!(protocol = protocol.name(), method = %method, path = url.path(), body = %b, "{} request", protocol.name());
             }
             if !headers.contains_key(CONTENT_TYPE) {
                 req = req.header(CONTENT_TYPE, "application/xml; charset=utf-8");
@@ -315,29 +391,34 @@ impl CaldavClient {
         let result = req.send().await;
         let status = result.as_ref().ok().map(|r| r.status());
         let class = status_class(status);
-        metrics::counter!("caldav_requests_total", "method" => method.to_string(), "status_class" => class)
+        metrics::counter!(protocol.requests_metric(), "method" => method.to_string(), "status_class" => class)
             .increment(1);
-        metrics::histogram!("caldav_request_duration_seconds", "method" => method.to_string())
+        metrics::histogram!(protocol.duration_metric(), "method" => method.to_string())
             .record(started.elapsed().as_secs_f64());
         tracing::debug!(
+            protocol = protocol.name(),
             method = %method,
             path = url.path(),
             status = status.map(|s| s.as_u16()),
             elapsed_ms = started.elapsed().as_millis() as u64,
-            "caldav request"
+            "{} request",
+            protocol.name()
         );
         (status, result)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn client(base: &str) -> CaldavClient {
-        CaldavClient::new(CaldavSettings::new(
+    fn client(base: &str) -> DavClient {
+        DavClient::new(DavSettings::new(
+            Protocol::CalDav,
             Url::parse(base).unwrap(),
             "user@example.com".into(),
             SecretString::from("app-pass"),
+            "mcp-icloud-dav-test/0".into(),
         ))
         .unwrap()
     }
@@ -347,11 +428,36 @@ mod tests {
     }
 
     #[test]
+    fn protocols_name_their_metrics_content_type_and_label() {
+        assert_eq!(Protocol::CalDav.name(), "caldav");
+        assert_eq!(Protocol::CardDav.name(), "carddav");
+        assert_eq!(
+            Protocol::CalDav.content_type(),
+            "text/calendar; charset=utf-8"
+        );
+        assert_eq!(
+            Protocol::CardDav.content_type(),
+            "text/vcard; charset=utf-8"
+        );
+        assert_eq!(Protocol::CalDav.requests_metric(), "caldav_requests_total");
+        assert_eq!(
+            Protocol::CardDav.duration_metric(),
+            "carddav_request_duration_seconds"
+        );
+        assert_eq!(Protocol::CardDav.label(), "CardDAV");
+        let c = client("https://caldav.icloud.com");
+        assert_eq!(c.protocol(), Protocol::CalDav);
+    }
+
+    #[test]
     fn icloud_base_trusts_any_icloud_host_on_https_443_only() {
         let c = client("https://caldav.icloud.com");
         assert!(c.is_trusted(&url("https://caldav.icloud.com/")));
         assert!(c.is_trusted(&url(
             "https://p99-caldav.icloud.com:443/1234567890/calendars/"
+        )));
+        assert!(c.is_trusted(&url(
+            "https://p99-contacts.icloud.com:443/1234567890/carddavhome/"
         )));
         assert!(!c.is_trusted(&url("http://p99-caldav.icloud.com/")));
         assert!(!c.is_trusted(&url("https://p99-caldav.icloud.com:8443/")));
@@ -390,6 +496,10 @@ mod tests {
         assert_eq!(kind(507), Some("quota"));
         assert_eq!(kind(400), Some("upstream"));
         assert_eq!(kind(503), Some("upstream"));
+        assert_eq!(
+            map_status(&Method::PUT, &u, StatusCode::FORBIDDEN).unwrap_err(),
+            DavError::Forbidden("/1234567890/calendars/home/x.ics".into())
+        );
     }
 
     #[test]

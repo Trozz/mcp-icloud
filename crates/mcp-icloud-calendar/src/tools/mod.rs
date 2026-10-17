@@ -1,5 +1,5 @@
 use crate::caldav::discovery::{Account, CalendarInfo, Directory};
-use crate::caldav::xml::{DavResponse, calendar_query};
+use crate::caldav::xml::calendar_query;
 use crate::error::{self, CalError};
 use crate::freebusy::{self, WorkingHours};
 use crate::ical::model::{PartStat, When};
@@ -10,6 +10,7 @@ use crate::view::{bound, event_detail, event_fields, occurrence_in, occurrence_o
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use chrono_tz::Tz;
 use futures::{StreamExt, TryStreamExt};
+use mcp_icloud_dav::xml::DavResponse;
 use mcp_server_core::observability::content_logging_enabled;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -250,7 +251,12 @@ impl CalendarServer {
         cal: CalendarInfo,
         body: String,
     ) -> error::Result<(CalendarInfo, Vec<DavResponse>)> {
-        let r = self.dir.client().report(&cal.url, body).await;
+        let r = self
+            .dir
+            .client()
+            .report(&cal.url, body)
+            .await
+            .map_err(CalError::from);
         if let Err(CalError::NotFound(_)) = &r {
             self.dir.invalidate().await;
         }

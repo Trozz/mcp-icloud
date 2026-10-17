@@ -1,14 +1,15 @@
 //! The fake must behave like iCloud for the semantics the tools rely on.
 mod support;
-use mcp_icloud_calendar::caldav::client::{CaldavClient, CaldavSettings, Precondition};
+use mcp_icloud_calendar::caldav::caldav_settings;
 use mcp_icloud_calendar::caldav::xml::calendar_query;
+use mcp_icloud_dav::client::{DavClient, Precondition};
 use secrecy::SecretString;
 use support::fake_caldav::{EMAIL, FakeCalDav, FakeState, PASSWORD};
 
 const EVENT: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example Corp//Test//EN\r\nBEGIN:VEVENT\r\nUID:self-test\r\nDTSTAMP:20261001T080000Z\r\nDTSTART:20261020T090000Z\r\nDTEND:20261020T100000Z\r\nSUMMARY:Self test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
-fn client(fake: &FakeCalDav) -> CaldavClient {
-    CaldavClient::new(CaldavSettings::new(
+fn client(fake: &FakeCalDav) -> DavClient {
+    DavClient::new(caldav_settings(
         fake.url.clone(),
         EMAIL.into(),
         SecretString::from(PASSWORD),
