@@ -69,7 +69,7 @@ Events are addressed by `event_id` (as returned by `list_events`); one occurrenc
 
 ### Invitations
 
-With `ICLOUD_ALLOW_INVITES=false` (default) attendees are always shown and preserved, but the server will not change them: attendee arguments and `respond_to_invitation` are refused, and events you organize that have attendees, and invitations from others (apart from your own alerts), cannot be changed or deleted, because iCloud would email the attendees. With `ICLOUD_ALLOW_INVITES=true`, adding or removing attendees makes iCloud send invitations or cancellations, and `respond_to_invitation` sends your reply to the organizer.
+With `ICLOUD_ALLOW_INVITES=false` (default) attendees are always shown and preserved, but the server will not change them: attendee arguments are refused, `respond_to_invitation` is not registered (clients will not see it), and events you organize that have attendees, and invitations from others (apart from your own alerts), cannot be changed or deleted, because iCloud would email the attendees. With `ICLOUD_ALLOW_INVITES=true`, adding or removing attendees makes iCloud send invitations or cancellations, and `respond_to_invitation` sends your reply to the organizer.
 
 Reminders are not available: Apple no longer exposes upgraded iCloud Reminders over CalDAV.
 
