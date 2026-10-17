@@ -1644,6 +1644,7 @@ dependencies = [
  "axum",
  "http-body-util",
  "mcp-icloud-calendar",
+ "mcp-icloud-contacts",
  "mcp-icloud-mail",
  "mcp-server-core",
  "serde_json",

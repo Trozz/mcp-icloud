@@ -18,6 +18,7 @@ pub const CRATE_TARGET: &str = "mcp_icloud";
 pub const SERVICES: &[(&str, ServiceFactory)] = &[
     ("mail", mcp_icloud_mail::from_env),
     ("calendar", mcp_icloud_calendar::from_env),
+    ("contacts", mcp_icloud_contacts::from_env),
 ];
 
 /// Resolves `ICLOUD_SERVICES` (comma list, unset means every registered service).
@@ -227,12 +228,12 @@ mod tests {
 
     #[test]
     fn selection_errors_are_reported_with_the_rest() {
-        let mut e = with_core(&[("ICLOUD_SERVICES", "contacts")]);
+        let mut e = with_core(&[("ICLOUD_SERVICES", "reminders")]);
         assert!(load(&mut e, SERVICES).is_none());
         assert_eq!(
             e.errors,
             vec![
-                "ICLOUD_SERVICES contains an unknown service: contacts (known: mail, calendar)"
+                "ICLOUD_SERVICES contains an unknown service: reminders (known: mail, calendar, contacts)"
                     .to_string()
             ]
         );
