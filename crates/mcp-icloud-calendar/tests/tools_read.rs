@@ -440,3 +440,22 @@ async fn find_free_time_skips_free_cancelled_and_declined_events() {
     );
     assert!(e.starts_with("validation:"), "{e}");
 }
+
+#[tokio::test]
+async fn find_free_time_reports_truncated_when_a_series_expansion_is_capped() {
+    let hourly = daily("hourly").replace("FREQ=DAILY", "FREQ=HOURLY");
+    let mut st = FakeState::icloud_like();
+    st.put("home", "hourly.ics", &hourly);
+    let fake = FakeCalDav::start(st).await;
+    let v = json(
+        &server(&fake, false)
+            .find_free_time(params(json!({
+                "start": "2026-01-01",
+                "end": "2026-03-01",
+                "duration_minutes": 15
+            })))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(v["truncated"], true);
+}

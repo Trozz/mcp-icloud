@@ -469,7 +469,7 @@ impl CalendarServer {
                 .transpose()?;
             let account = self.dir.account().await?;
             let calendars = Self::calendars(&account, p.calendars.as_deref())?;
-            let (found, _) = self
+            let (found, expansion_truncated) = self
                 .occurrences(&account, calendars, start, end, zone)
                 .await?;
             let busy: Vec<freebusy::Interval> = found
@@ -488,7 +488,7 @@ impl CalendarServer {
                 busy,
                 Duration::minutes(i64::from(p.duration_minutes)),
             );
-            let truncated = slots.len() > MAX_FREE_SLOTS;
+            let truncated = expansion_truncated || slots.len() > MAX_FREE_SLOTS;
             let slots: Vec<Value> = slots
                 .into_iter()
                 .take(MAX_FREE_SLOTS)
