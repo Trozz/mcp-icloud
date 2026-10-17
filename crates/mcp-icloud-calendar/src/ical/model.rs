@@ -1,6 +1,6 @@
 use crate::error::{CalError, Result};
 use crate::ical::line::Property;
-use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 
 const DATE_FORMAT: &str = "%Y%m%d";
@@ -49,17 +49,27 @@ impl When {
         }
     }
 
-    /// Adds a duration. Dates move by whole days.
-    pub fn add(&self, d: Duration) -> When {
-        match self {
-            When::Date(date) => When::Date(*date + Duration::days(d.num_days())),
-            When::Utc(dt) => When::Utc(*dt + d),
+    /// Adds a duration. Dates move by whole days. None when the result leaves years 0 to 9999.
+    pub fn add(&self, d: Duration) -> Option<When> {
+        let sum = match self {
+            When::Date(date) => When::Date(date.checked_add_signed(Duration::days(d.num_days()))?),
+            When::Utc(dt) => When::Utc(dt.checked_add_signed(d)?),
             When::Zoned { local, tzid } => When::Zoned {
-                local: *local + d,
+                local: local.checked_add_signed(d)?,
                 tzid: tzid.clone(),
             },
-            When::Floating(local) => When::Floating(*local + d),
-        }
+            When::Floating(local) => When::Floating(local.checked_add_signed(d)?),
+        };
+        sum.in_supported_years().then_some(sum)
+    }
+
+    fn in_supported_years(&self) -> bool {
+        let year = match self {
+            When::Date(d) => d.year(),
+            When::Utc(dt) => dt.year(),
+            When::Zoned { local, .. } | When::Floating(local) => local.year(),
+        };
+        (0..=9999).contains(&year)
     }
 
     /// The value part as written in iCalendar.
@@ -108,7 +118,10 @@ impl When {
 fn lenient_local(naive: NaiveDateTime, tz: Tz) -> DateTime<Utc> {
     match tz.from_local_datetime(&naive) {
         LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),
-        LocalResult::None => lenient_local(naive + Duration::hours(1), tz),
+        LocalResult::None => match naive.checked_add_signed(Duration::hours(1)) {
+            Some(next) => lenient_local(next, tz),
+            None => naive.and_utc(),
+        },
     }
 }
 
@@ -288,10 +301,9 @@ impl MyAddresses {
 /// Lower-cases and strips a `mailto:` prefix and a trailing slash.
 pub fn normalize_address(value: &str) -> String {
     let v = value.trim();
-    let v = if v.len() >= 7 && v[..7].eq_ignore_ascii_case("mailto:") {
-        &v[7..]
-    } else {
-        v
+    let v = match v.get(..7) {
+        Some(p) if p.eq_ignore_ascii_case("mailto:") => &v[7..],
+        _ => v,
     };
     v.trim_end_matches('/').to_ascii_lowercase()
 }
@@ -374,7 +386,10 @@ mod tests {
         );
         let z = When::from_property(&prop("DTSTART;TZID=Europe/London:20260701T090000")).unwrap();
         assert_eq!(
-            z.add(Duration::minutes(30)).to_property("DTEND").to_line(),
+            z.add(Duration::minutes(30))
+                .unwrap()
+                .to_property("DTEND")
+                .to_line(),
             "DTEND;TZID=Europe/London:20260701T093000"
         );
         let instant = z.instant(Tz::UTC);
@@ -383,7 +398,29 @@ mod tests {
             When::in_style_of(instant, &When::Utc(instant), Tz::UTC).value_string(),
             "20260701T080000Z"
         );
-        assert_eq!(d.add(Duration::days(2)).value_string(), "20261229");
+        assert_eq!(d.add(Duration::days(2)).unwrap().value_string(), "20261229");
+    }
+
+    #[test]
+    fn add_out_of_range_is_none() {
+        let far = When::Utc(DateTime::<Utc>::MAX_UTC);
+        assert!(far.add(Duration::days(1)).is_none());
+        let date = When::Date(NaiveDate::from_ymd_opt(9999, 12, 31).unwrap());
+        assert!(date.add(Duration::days(1)).is_none());
+        let local = When::Floating(
+            NaiveDate::from_ymd_opt(9999, 12, 31)
+                .unwrap()
+                .and_hms_opt(23, 0, 0)
+                .unwrap(),
+        );
+        assert!(local.add(Duration::hours(2)).is_none());
+        assert!(local.add(Duration::hours(1) - Duration::hours(1)).is_some());
+    }
+
+    #[test]
+    fn normalize_address_survives_multibyte_prefix() {
+        assert_eq!(normalize_address("ééééé@x"), "ééééé@x");
+        assert_eq!(normalize_address("MAILTO:A@x"), "a@x");
     }
 
     #[test]

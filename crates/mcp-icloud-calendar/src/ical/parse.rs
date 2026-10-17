@@ -53,11 +53,16 @@ pub fn event_from_component(c: &Component, me: &MyAddresses) -> Result<EventData
     let start = When::from_property(start_prop)?;
     let end = match (c.prop("DTEND"), c.value("DURATION")) {
         (Some(p), _) => When::from_property(p)?,
-        (None, Some(d)) => start.add(
-            parse_duration(d)
-                .ok_or_else(|| CalError::Upstream(format!("invalid DURATION value {d:?}")))?,
-        ),
-        (None, None) if start.is_date() => start.add(Duration::days(1)),
+        (None, Some(d)) => {
+            let duration = parse_duration(d)
+                .ok_or_else(|| CalError::Upstream(format!("invalid DURATION value {d:?}")))?;
+            start.add(duration).ok_or_else(|| {
+                CalError::Upstream(format!("DURATION {d:?} moves DTSTART out of range"))
+            })?
+        }
+        (None, None) if start.is_date() => start
+            .add(Duration::days(1))
+            .ok_or_else(|| CalError::Upstream("DTSTART too late for a one day event".into()))?,
         (None, None) => start.clone(),
     };
     Ok(EventData {
@@ -106,7 +111,10 @@ fn all_whens(c: &Component, name: &str) -> Result<Vec<When>> {
 /// The address an ATTENDEE or ORGANIZER stands for: its mailto value, else its EMAIL parameter.
 pub fn address_of(p: &Property) -> String {
     let value = p.value().trim();
-    if value.len() >= 7 && value[..7].eq_ignore_ascii_case("mailto:") {
+    if value
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mailto:"))
+    {
         return normalize_address(value);
     }
     match p.param("EMAIL") {
@@ -192,19 +200,20 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
         let n: i64 = number.parse().ok()?;
         number.clear();
         seen = true;
-        total += match (ch, in_time) {
-            ('W', false) => Duration::weeks(n),
-            ('D', false) => Duration::days(n),
-            ('H', true) => Duration::hours(n),
-            ('M', true) => Duration::minutes(n),
-            ('S', true) => Duration::seconds(n),
+        let part = match (ch, in_time) {
+            ('W', false) => Duration::try_weeks(n)?,
+            ('D', false) => Duration::try_days(n)?,
+            ('H', true) => Duration::try_hours(n)?,
+            ('M', true) => Duration::try_minutes(n)?,
+            ('S', true) => Duration::try_seconds(n)?,
             _ => return None,
         };
+        total = total.checked_add(&part)?;
     }
     if !number.is_empty() || !seen {
         return None;
     }
-    Some(total * sign)
+    Some(if sign < 0 { -total } else { total })
 }
 
 #[cfg(test)]
@@ -316,6 +325,17 @@ mod tests {
             events(&cal, &me()).unwrap()[0].duration(Tz::UTC),
             Duration::zero()
         );
+        let cal = parse_resource(&format!(
+            "{base}DTSTART:99991231T230000Z\nDURATION:P100000W\nEND:VEVENT\nEND:VCALENDAR\n"
+        ))
+        .unwrap();
+        assert_eq!(events(&cal, &me()).unwrap_err().kind(), "upstream");
+    }
+
+    #[test]
+    fn address_of_survives_multibyte_values() {
+        let p = Property::new("ATTENDEE", "ééééé@x");
+        assert_eq!(address_of(&p), "ééééé@x");
     }
 
     #[test]
@@ -336,6 +356,9 @@ mod tests {
     fn durations() {
         assert_eq!(parse_duration("-PT15M"), Some(Duration::minutes(-15)));
         assert_eq!(parse_duration("-P0DT0H10M0S"), Some(Duration::minutes(-10)));
+        assert_eq!(parse_duration("P9999999999999999W"), None);
+        assert_eq!(parse_duration("PT99999999999999999999S"), None);
+        assert_eq!(parse_duration("P10000000000W10000000000W"), None);
         assert_eq!(parse_duration("P1W"), Some(Duration::weeks(1)));
         assert_eq!(parse_duration("+P1DT2H"), Some(Duration::hours(26)));
         assert_eq!(parse_duration("PT"), None);
