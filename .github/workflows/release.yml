@@ -95,6 +95,7 @@ jobs:
             -e PUBLIC_URL=https://icloud.example.com \\
             -e OAUTH_SIGNING_KEY="\$(openssl rand -hex 32)" \\
             -e OAUTH_ADMIN_PASSWORD=choose-a-long-password \\
+            -e CALENDAR_TIMEZONE=Europe/London \\
             -v /path/to/certs:/certs:ro \\
             -e TLS_CERT_PATH=/certs/fullchain.pem \\
             -e TLS_KEY_PATH=/certs/privkey.pem \\
@@ -107,10 +108,12 @@ jobs:
 
           ### Connect
 
-          Each service is its own MCP server at \`https://<your PUBLIC_URL host>/<service>\` (mail: \`/mail\`).
+          Each service is its own MCP server at \`https://<your PUBLIC_URL host>/<service>\`: mail at \`/mail\`, calendar at \`/calendar\`. Set \`ICLOUD_SERVICES\` to run only some of them.
 
-          - claude.ai: add a custom connector with the URL \`https://<your PUBLIC_URL host>/mail\` and sign in with \`OAUTH_ADMIN_PASSWORD\`.
-          - Claude Code: \`claude mcp add --transport http icloud-mail https://<host>/mail --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\`
+          - claude.ai: add one custom connector per service (\`https://<your PUBLIC_URL host>/mail\`, \`https://<your PUBLIC_URL host>/calendar\`) and sign in with \`OAUTH_ADMIN_PASSWORD\`.
+          - Claude Code: \`claude mcp add --transport http icloud-mail https://<host>/mail --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\` and \`claude mcp add --transport http icloud-calendar https://<host>/calendar --header "Authorization: Bearer <MCP_AUTH_TOKEN>"\`
+
+          Upgrading from mcp-icloud-mail: mail moved from \`/mcp\` to \`/mail\`; re-add the connector.
 
           Full configuration reference: https://github.com/${REPO}/blob/${TAG}/README.md
           EOF
