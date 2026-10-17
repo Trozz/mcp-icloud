@@ -153,6 +153,21 @@ async fn update_group_refuses_bad_requests_before_writing() {
 }
 
 #[tokio::test]
+async fn an_update_group_that_changes_nothing_does_not_write() {
+    let fake = seeded().await;
+    let s = server(&fake);
+    for args in [
+        json!({"id": GROUP_UID, "add_ids": [], "remove_ids": []}),
+        json!({"id": GROUP_UID, "name": " Book Club "}),
+        json!({"id": GROUP_UID, "add_ids": [PERSON_UID]}),
+    ] {
+        let v = json(&s.update_group(params(args.clone())).await.unwrap());
+        assert_eq!(v["name"], "Book Club", "{args}");
+    }
+    assert_eq!(fake.state().count("PUT"), 0);
+}
+
+#[tokio::test]
 async fn a_conflicting_group_update_is_reported() {
     let fake = seeded().await;
     fake.state().fail.push_back(("PUT", 412));
