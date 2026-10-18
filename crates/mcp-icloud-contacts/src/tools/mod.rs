@@ -15,6 +15,7 @@ use tracing::Instrument;
 pub mod duplicates;
 pub mod groups;
 pub mod merge;
+pub mod photo;
 pub mod read;
 pub mod write;
 
@@ -38,7 +39,8 @@ impl ContactsServer {
                 + Self::write_router()
                 + Self::group_router()
                 + Self::duplicate_router()
-                + Self::merge_router(),
+                + Self::merge_router()
+                + Self::photo_router(),
         }
     }
 

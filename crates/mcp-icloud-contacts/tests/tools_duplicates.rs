@@ -431,3 +431,72 @@ async fn a_merge_too_big_for_icloud_changes_nothing() {
     assert_eq!(state.count("PUT"), 0);
     assert_eq!(state.count("DELETE"), 0);
 }
+
+#[tokio::test]
+async fn copy_contact_photo_copies_the_photo_lines_exactly() {
+    let fake = FakeCardDav::start(merge_state()).await;
+    let v = json(
+        &server(&fake)
+            .copy_contact_photo(params(json!({"from_id": PERSON_UID, "to_id": DUP_UID})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(v["id"], DUP_UID);
+    assert_eq!(v["has_photo"], true);
+    let state = fake.state();
+    let put = state.log.iter().find(|l| l.method == "PUT").unwrap();
+    assert_eq!(put.path, format!("{BOOK}{DUP_FILE}"));
+    assert!(put.if_match.is_some());
+    let written = lines(&state.card(DUP_FILE).unwrap().body);
+    let person = lines(PERSON);
+    let photo_at = person.iter().position(|l| l.starts_with("PHOTO;")).unwrap();
+    for l in &person[photo_at..photo_at + 4] {
+        assert!(written.contains(l), "{l:?} missing");
+    }
+    for l in ["X-IMAGETYPE:PHOTO", "X-IMAGEHASH:AAECAwQFBgcICQoLDA0ODw=="] {
+        assert!(written.contains(&l.to_string()), "{l} missing");
+    }
+    assert!(written.contains(&"NOTE:From the old phone".to_string()));
+}
+
+#[tokio::test]
+async fn copy_contact_photo_refuses_bad_requests_before_writing() {
+    let fake = FakeCardDav::start(merge_state()).await;
+    let s = server(&fake);
+    for (args, want) in [
+        (
+            json!({"from_id": DUP_UID, "to_id": PERSON_UID}),
+            format!("validation: {DUP_UID} has no photo"),
+        ),
+        (
+            json!({"from_id": PERSON_UID, "to_id": format!(" {PERSON_UID}")}),
+            "validation: from_id and to_id are the same contact".to_string(),
+        ),
+        (
+            json!({"from_id": PERSON_UID, "to_id": GROUP_UID}),
+            "validation:".to_string(),
+        ),
+        (
+            json!({"from_id": "NOPE", "to_id": DUP_UID}),
+            "not_found:".to_string(),
+        ),
+    ] {
+        let e = error_text(&s.copy_contact_photo(params(args)).await.unwrap());
+        assert!(e.starts_with(&want), "{e}");
+    }
+    assert_eq!(fake.state().count("PUT"), 0);
+}
+
+#[tokio::test]
+async fn copying_the_same_photo_again_writes_nothing() {
+    let fake = FakeCardDav::start(merge_state()).await;
+    let s = server(&fake);
+    for _ in 0..2 {
+        json(
+            &s.copy_contact_photo(params(json!({"from_id": PERSON_UID, "to_id": DUP_UID})))
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(fake.state().count("PUT"), 1);
+}

@@ -86,6 +86,9 @@ Reminders are not available: Apple no longer exposes upgraded iCloud Reminders o
 | `create_contact`, `update_contact` | Create a contact, or change only the fields you pass (`""` clears one). A list you pass (`emails`, `phones`, `urls`, `addresses`, `dates`, `related`) replaces that whole list; entries you pass back unchanged keep their exact lines |
 | `delete_contact` | Delete a contact and remove it from its groups. Your own card cannot be deleted |
 | `create_group`, `update_group`, `delete_group` | Create, rename, add or remove members of, or delete a group. Deleting a group keeps its contacts |
+| `find_duplicate_contacts` | Groups of likely duplicates: contacts that share an email address, a phone number (in any format) or a full name of at least two words, with the reasons. The first contact of each group is the best one to keep (it has a photo, or the most details) |
+| `merge_contacts` | Merge up to 10 contacts into one (`keep_id`, `merge_ids`): emails, phones, URLs, addresses, dates and related names the kept contact lacks are added, its empty fields are filled, notes are combined, groups move to the kept contact, then the others are deleted. Photos are not copied (`photo_not_kept` lists them). Your own card can be kept but not merged away |
+| `copy_contact_photo` | Copy one contact's photo onto another (`from_id`, `to_id`), for example before merging into a contact without a photo |
 
 Contacts and groups are addressed by `id`, as `search_contacts` and `list_groups` return it. Labels are plain words: `home`, `work`, `other`, `mobile`, `iPhone`, `main`, `pager`, `home fax`, `work fax`, `home page`, `anniversary`, relations such as `mother` or `friend`, or any custom text. Birthdays and dates are `YYYY-MM-DD`, or `--MM-DD` without a year.
 
@@ -281,7 +284,7 @@ ICLOUD_EMAIL=... ICLOUD_APP_PASSWORD=... cargo test -p mcp-icloud-calendar --tes
 ICLOUD_EMAIL=... ICLOUD_APP_PASSWORD=... cargo test -p mcp-icloud-contacts --test live_icloud -- --ignored --nocapture --test-threads=1
 ```
 
-The calendar round trip creates one clearly named event in December 2030 and always deletes it. The contacts round trip creates a contact `ZZ MCP Probe` and a group `ZZ MCP Probe Group` with made-up data and always deletes both. The invitation test runs only when `ICLOUD_TEST_ATTENDEE` names an address you control.
+The calendar round trip creates one clearly named event in December 2030 and always deletes it. The contacts round trips create contacts named `ZZ MCP Probe` and a group `ZZ MCP Probe Group` with made-up data (the merge test merges two such contacts) and always delete them. The invitation test runs only when `ICLOUD_TEST_ATTENDEE` names an address you control.
 
 ### Adding a service
 

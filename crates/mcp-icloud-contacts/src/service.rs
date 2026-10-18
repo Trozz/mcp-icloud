@@ -91,6 +91,7 @@ mod tests {
         assert_eq!(
             svc.tool_names(),
             [
+                "copy_contact_photo",
                 "create_contact",
                 "create_group",
                 "delete_contact",
