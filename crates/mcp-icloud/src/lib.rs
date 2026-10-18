@@ -204,22 +204,21 @@ mod tests {
         let loaded = server().load(&mut e).expect("loads");
         let caps = Server::log_caps(&loaded.services);
         assert!(caps.contains(&"async_imap"), "{caps:?}");
-        assert!(
-            caps.contains(&mcp_server_core::policy::AUDIT_TARGET),
-            "{caps:?}"
-        );
+        let audit = mcp_server_core::policy::AUDIT_TARGET;
         let filter = mcp_server_core::observability::log_filter(
             "debug,async_imap=trace,async_imap::client=trace",
             &caps,
+            &[audit],
         );
         assert!(filter.starts_with("debug,async_imap=info,"), "{filter}");
+        assert!(filter.contains(&format!("{audit}=info")), "{filter}");
     }
 
     #[test]
     fn debug_directive_covers_service_crates() {
         use tracing::Level;
         use tracing_subscriber::layer::SubscriberExt;
-        let level = mcp_server_core::observability::log_filter("trace", &["async_imap"]);
+        let level = mcp_server_core::observability::log_filter("trace", &["async_imap"], &[]);
         let directives = mcp_server_core::observability::build_filter(&level, true, CRATE_TARGET);
         let subscriber =
             tracing_subscriber::registry().with(tracing_subscriber::EnvFilter::new(directives));
