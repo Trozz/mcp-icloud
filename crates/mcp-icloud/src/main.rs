@@ -6,7 +6,7 @@ use mcp_server_core::{install_crypto_provider, observability, shutdown_signal, t
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: mcp-icloud [--version | --healthcheck]\nAll configuration is read from environment variables; see README.md.";
+const USAGE: &str = "usage: mcp-icloud [--version | --healthcheck]\nAll configuration is read from environment variables; see https://trozz.github.io/mcp-icloud/configuration.html";
 
 #[tokio::main]
 async fn main() -> ExitCode {
