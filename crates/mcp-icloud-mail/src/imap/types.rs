@@ -16,6 +16,8 @@ pub struct ListedMailbox {
     pub name: String,
     pub role: Option<Role>,
     pub selectable: bool,
+    /// Hierarchy delimiter from LIST (`/` on iCloud), if the server uses one.
+    pub delimiter: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

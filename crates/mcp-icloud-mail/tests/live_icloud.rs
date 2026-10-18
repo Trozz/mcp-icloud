@@ -1,13 +1,15 @@
 //! Live tests against a real iCloud account. Ignored by default; they need:
 //!   ICLOUD_EMAIL, ICLOUD_APP_PASSWORD and optionally ICLOUD_USERNAME.
 //! Run: cargo test -p mcp-icloud-mail --test live_icloud -- --ignored --nocapture --test-threads=1
-//! They read the mailbox and create one draft, which they delete again (Drafts -> Trash -> expunged
-//! when UIDPLUS is available). Nothing is sent.
+//! They read the mailbox and create drafts (one with a small made-up attachment), which they delete
+//! again (Drafts -> Trash -> expunged when UIDPLUS is available), and a "ZZ MCP Probe" mailbox,
+//! which they rename and delete. Nothing is sent.
 mod support;
 use futures::TryStreamExt;
 use mcp_icloud_mail::cache::LruMessageCache;
 use mcp_icloud_mail::imap::{ImapClient, ImapSettings, Role, SearchQuery};
 use mcp_icloud_mail::mail::build::Identity;
+use mcp_icloud_mail::mail::parse;
 use mcp_icloud_mail::tools::{MailServer, ToolSettings};
 use serde_json::json;
 use std::sync::Arc;
@@ -204,4 +206,96 @@ async fn live_draft_round_trip() {
             .await
             .unwrap();
     }
+}
+
+/// Saves a draft with a 13-byte made-up attachment, checks it and removes it; then creates,
+/// renames and deletes a "ZZ MCP Probe" mailbox. Prints only sizes and counts.
+#[tokio::test]
+#[ignore]
+async fn live_attachment_draft_and_probe_mailbox() {
+    let a = account();
+    let imap = client(&a);
+    let server = MailServer::new(
+        imap.clone(),
+        None,
+        Arc::new(ToolSettings {
+            identity: Identity {
+                email: a.email.clone(),
+                name: Some("mcp-icloud-mail live test".into()),
+            },
+            max_attachment_bytes: 1024 * 1024,
+            send_lock: Default::default(),
+        }),
+    );
+    let v = json(
+        &server
+            .create_draft(params(json!({
+                "to": [a.email],
+                "subject": "ZZ MCP Probe attachment draft (safe to delete)",
+                "body_text": "Created by the live test suite.",
+                "attachments": [
+                    {"filename": "zz-probe.txt", "content_type": "text/plain", "content_base64": "WlogTUNQIFByb2JlCg=="}
+                ]
+            })))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(v["attachments"][0]["size"], 13);
+    let drafts = v["mailbox"].as_str().unwrap().to_string();
+    let uid = v["uid"].as_u64().expect("draft uid") as u32;
+    let (_, raw) = imap.fetch_raw(&drafts, uid, None).await.unwrap();
+    let attached = parse::attachment(&raw, 0).unwrap();
+    assert_eq!(attached.contents, b"ZZ MCP Probe\n");
+    println!(
+        "draft {drafts}/{uid}: {} bytes, attachment {} bytes",
+        raw.len(),
+        attached.contents.len()
+    );
+
+    imap.delete_messages(&drafts, &[uid], false, None)
+        .await
+        .unwrap();
+    let trash = imap.role_mailbox(Role::Trash).await.unwrap();
+    let found = imap
+        .search_uids(
+            &trash,
+            &format!(
+                "HEADER Message-ID \"<{}>\"",
+                v["message_id"].as_str().unwrap()
+            ),
+        )
+        .await
+        .unwrap();
+    if imap.capabilities().await.unwrap().uidplus && !found.is_empty() {
+        imap.delete_messages(&trash, &found, true, None)
+            .await
+            .unwrap();
+    }
+
+    let probe = "ZZ MCP Probe";
+    let renamed = "ZZ MCP Probe Renamed";
+    json(
+        &server
+            .create_mailbox(params(json!({"name": probe})))
+            .await
+            .unwrap(),
+    );
+    json(
+        &server
+            .rename_mailbox(params(json!({"name": probe, "new_name": renamed})))
+            .await
+            .unwrap(),
+    );
+    json(
+        &server
+            .delete_mailbox(params(json!({"name": renamed})))
+            .await
+            .unwrap(),
+    );
+    let boxes = imap.mailboxes().await.unwrap();
+    assert!(
+        !boxes.iter().any(|b| b.name.starts_with(probe)),
+        "a probe mailbox is still listed"
+    );
+    println!("{} mailboxes after cleanup", boxes.len());
 }

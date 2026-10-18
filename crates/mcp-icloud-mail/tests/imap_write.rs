@@ -376,3 +376,158 @@ async fn append_rejected_is_an_error() {
     );
     assert!(fake.messages("Drafts").is_empty());
 }
+
+/// The usual account plus user folders: `Proj`, `Projects` with a child `Projects/Alpha`, and
+/// `Receipts` holding one message.
+async fn fake_with_folders() -> FakeImap {
+    let mut st = FakeState::icloud_like();
+    for name in ["Proj", "Projects", "Projects/Alpha", "Receipts"] {
+        st.mailboxes.insert(
+            name.into(),
+            FakeMailbox {
+                attrs: vec![],
+                uidvalidity: 2000,
+                uidnext: 1,
+                messages: vec![],
+            },
+        );
+    }
+    st.add_message("Receipts", &msg(1), &[]);
+    FakeImap::start(st).await
+}
+
+fn mailbox_names(fake: &FakeImap) -> Vec<String> {
+    fake.state
+        .lock()
+        .unwrap()
+        .mailboxes
+        .keys()
+        .cloned()
+        .collect()
+}
+
+fn sent(fake: &FakeImap, word: &str) -> bool {
+    fake.log().iter().any(|l| l.starts_with(word))
+}
+
+fn lists(fake: &FakeImap) -> usize {
+    fake.log().iter().filter(|l| l.starts_with("LIST")).count()
+}
+
+fn invalid(r: Result<(), MailError>) -> String {
+    match r {
+        Err(MailError::Invalid(m)) => m,
+        other => panic!("expected an invalid-input error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn rename_mailbox_moves_children_and_refreshes_the_list() {
+    let fake = fake_with_folders().await;
+    let c = client(&fake);
+    c.rename_mailbox("Projects", "Work").await.unwrap();
+    let names = mailbox_names(&fake);
+    assert!(names.contains(&"Work".to_string()), "{names:?}");
+    assert!(names.contains(&"Work/Alpha".to_string()), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n.starts_with("Projects")),
+        "{names:?}"
+    );
+    let before = lists(&fake);
+    c.move_messages("Receipts", &[1], "Work", None)
+        .await
+        .unwrap();
+    assert_eq!(lists(&fake), before, "the list was refreshed after RENAME");
+    assert_eq!(fake.messages("Work").len(), 1);
+}
+
+#[tokio::test]
+async fn rename_refusals_send_no_rename() {
+    let fake = fake_with_folders().await;
+    let c = client(&fake);
+    for (name, new_name, expected) in [
+        ("INBOX", "Old", "INBOX is a system mailbox"),
+        ("inbox", "Old", "inbox is a system mailbox"),
+        ("Drafts", "Old Drafts", "Drafts is a system mailbox"),
+        ("Archive", "Old", "Archive is a system mailbox"),
+        (
+            "Proj",
+            "Projects",
+            "a mailbox named Projects already exists",
+        ),
+        ("Proj", "Proj", "a mailbox named Proj already exists"),
+        ("Proj", "  ", "new_name must not be empty"),
+        ("Proj", "Trash", "Trash is reserved for a system mailbox"),
+        ("Proj", "inbox", "inbox is reserved for a system mailbox"),
+        ("Proj", "a\r\nb", "values must not contain line breaks"),
+    ] {
+        assert_eq!(
+            invalid(c.rename_mailbox(name, new_name).await),
+            expected,
+            "{name} -> {new_name}"
+        );
+    }
+    assert!(matches!(
+        c.rename_mailbox("Nope", "Other").await,
+        Err(MailError::MailboxNotFound(n)) if n == "Nope"
+    ));
+    assert!(!sent(&fake, "RENAME"), "{:?}", fake.log());
+}
+
+#[tokio::test]
+async fn rejected_rename_is_an_error() {
+    let fake = fake_with_folders().await;
+    fake.state
+        .lock()
+        .unwrap()
+        .fail
+        .insert("RENAME".into(), "simulated rename failure".into());
+    let c = client(&fake);
+    let err = c.rename_mailbox("Proj", "Old").await.unwrap_err();
+    assert!(matches!(err, MailError::Rejected { .. }), "{err}");
+    assert!(mailbox_names(&fake).contains(&"Proj".to_string()));
+}
+
+#[tokio::test]
+async fn delete_mailbox_removes_an_empty_leaf_and_refreshes() {
+    let fake = fake_with_folders().await;
+    let c = client(&fake);
+    c.delete_mailbox("Proj").await.unwrap();
+    assert!(!mailbox_names(&fake).contains(&"Proj".to_string()));
+    let before = lists(&fake);
+    assert!(matches!(
+        c.move_messages("Receipts", &[1], "Proj", None).await,
+        Err(MailError::MailboxNotFound(_))
+    ));
+    assert_eq!(lists(&fake), before + 1, "a miss re-lists once, then fails");
+
+    assert_eq!(
+        invalid(c.delete_mailbox("Projects").await),
+        "Projects has child mailboxes"
+    );
+    c.delete_mailbox("Projects/Alpha").await.unwrap();
+    c.delete_mailbox("Projects").await.unwrap();
+    assert!(!mailbox_names(&fake).iter().any(|n| n.starts_with("Proj")));
+}
+
+#[tokio::test]
+async fn delete_refusals_send_no_delete() {
+    let fake = fake_with_folders().await;
+    let c = client(&fake);
+    for (name, expected) in [
+        ("INBOX", "INBOX is a system mailbox"),
+        ("inbox", "inbox is a system mailbox"),
+        ("Deleted Messages", "Deleted Messages is a system mailbox"),
+        ("Sent Messages", "Sent Messages is a system mailbox"),
+        ("Projects", "Projects has child mailboxes"),
+        ("Receipts", "Receipts is not empty (1 messages)"),
+    ] {
+        assert_eq!(invalid(c.delete_mailbox(name).await), expected, "{name}");
+    }
+    assert!(matches!(
+        c.delete_mailbox("Nope").await,
+        Err(MailError::MailboxNotFound(n)) if n == "Nope"
+    ));
+    assert!(!sent(&fake, "DELETE"), "{:?}", fake.log());
+    assert_eq!(fake.messages("Receipts").len(), 1);
+}

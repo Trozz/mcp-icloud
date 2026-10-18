@@ -1,3 +1,4 @@
+use super::attach::{AttachmentSummary, DraftAttachment};
 use super::parse::{display_text, format_addresses, header_ids, parse};
 use crate::error::{MailError, Result};
 use mail_builder::MessageBuilder;
@@ -18,11 +19,14 @@ pub struct DraftInput {
     pub subject: String,
     pub body_text: String,
     pub body_html: Option<String>,
+    pub attachments: Vec<DraftAttachment>,
 }
 
 pub struct BuiltMessage {
     pub raw: Vec<u8>,
     pub message_id: String,
+    /// The files attached to the message, in order.
+    pub attachments: Vec<AttachmentSummary>,
 }
 
 /// Parses "Name <a@b>" or "a@b" into (name, email), validating the address.
@@ -57,11 +61,33 @@ fn base(identity: &Identity, message_id: &str) -> MessageBuilder<'static> {
         .message_id(message_id.to_string())
 }
 
-fn finish(builder: MessageBuilder<'_>, message_id: String) -> Result<BuiltMessage> {
+fn finish(
+    builder: MessageBuilder<'_>,
+    message_id: String,
+    attachments: Vec<AttachmentSummary>,
+) -> Result<BuiltMessage> {
     let raw = builder
         .write_to_vec()
         .map_err(|e| MailError::Invalid(format!("could not build message: {e}")))?;
-    Ok(BuiltMessage { raw, message_id })
+    Ok(BuiltMessage {
+        raw,
+        message_id,
+        attachments,
+    })
+}
+
+/// Adds caller-supplied attachments and returns what was attached.
+fn with_attachments(
+    mut b: MessageBuilder<'static>,
+    attachments: &[DraftAttachment],
+) -> (MessageBuilder<'static>, Vec<AttachmentSummary>) {
+    for a in attachments {
+        b = b.attachment(a.content_type.clone(), a.filename.clone(), a.data.clone());
+    }
+    (
+        b,
+        attachments.iter().map(DraftAttachment::summary).collect(),
+    )
 }
 
 fn with_recipients(
@@ -90,7 +116,8 @@ pub fn build_draft(identity: &Identity, d: &DraftInput) -> Result<BuiltMessage> 
     if let Some(html) = &d.body_html {
         b = b.html_body(html.clone());
     }
-    finish(b, id)
+    let (b, attached) = with_attachments(b, &d.attachments);
+    finish(b, id, attached)
 }
 
 fn prefixed(prefix: &str, subject: &str) -> String {
@@ -123,12 +150,14 @@ fn email_of(s: &str) -> String {
 
 /// Builds a reply draft. Recipients: Reply-To (else From). reply_all adds the original To and Cc,
 /// minus our own addresses and duplicates. Replying to our own message goes to its original To.
+/// Caller-supplied attachments are added after the quoted text.
 pub fn build_reply(
     identity: &Identity,
     self_addresses: &[String],
     original: &[u8],
     body: &str,
     reply_all: bool,
+    attachments: &[DraftAttachment],
 ) -> Result<BuiltMessage> {
     let m = parse(original)?;
     let me: Vec<String> = self_addresses
@@ -180,7 +209,8 @@ pub fn build_reply(
     if !references.is_empty() {
         b = b.references(references);
     }
-    finish(b, id)
+    let (b, attached) = with_attachments(b, attachments);
+    finish(b, id, attached)
 }
 
 /// Builds a forward draft with a forwarded-message header block and, optionally, the original attachments.
@@ -204,33 +234,50 @@ pub fn build_forward(
     let mut b = with_recipients(base(identity, &id), to, &[], &[])?
         .subject(prefixed("Fwd", m.subject().unwrap_or_default()))
         .text_body(text);
+    let mut attached = Vec::new();
     if include_attachments {
         for a in super::parse::attachments(&m) {
             let part = m
                 .attachments()
                 .nth(a.index)
                 .expect("index from attachments()");
+            let filename = a
+                .filename
+                .clone()
+                .unwrap_or_else(|| format!("attachment-{}", a.index));
             b = b.attachment(
                 a.mime_type.clone(),
-                a.filename
-                    .clone()
-                    .unwrap_or_else(|| format!("attachment-{}", a.index)),
+                filename.clone(),
                 part.contents().to_vec(),
             );
+            attached.push(AttachmentSummary {
+                filename,
+                content_type: a.mime_type,
+                size: a.size,
+            });
         }
     }
-    finish(b, id)
+    finish(b, id, attached)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mail::parse::{BodyFormat, view};
+    use crate::mail::attach::{AttachmentSummary, DraftAttachment};
+    use crate::mail::parse::{BodyFormat, attachment, view};
 
     fn me() -> Identity {
         Identity {
             email: "me@icloud.com".into(),
             name: Some("Me Myself".into()),
+        }
+    }
+
+    fn file(filename: &str, content_type: &str, data: &[u8]) -> DraftAttachment {
+        DraftAttachment {
+            filename: filename.into(),
+            content_type: content_type.into(),
+            data: data.to_vec(),
         }
     }
 
@@ -260,6 +307,7 @@ mod tests {
             subject: "Hello".into(),
             body_text: "Plain body".into(),
             body_html: Some("<p>Html body</p>".into()),
+            attachments: Vec::new(),
         };
         let built = build_draft(&me(), &d).unwrap();
         assert!(built.message_id.ends_with("@icloud.com"));
@@ -314,6 +362,7 @@ mod tests {
             ORIGINAL,
             "Sounds good",
             false,
+            &[],
         )
         .unwrap();
         let v = view(&built.raw, BodyFormat::Text, 10_000).unwrap();
@@ -329,7 +378,8 @@ mod tests {
 
     #[test]
     fn reply_all_excludes_self_and_duplicates() {
-        let built = build_reply(&me(), &["ME@icloud.com".into()], ORIGINAL, "ok", true).unwrap();
+        let built =
+            build_reply(&me(), &["ME@icloud.com".into()], ORIGINAL, "ok", true, &[]).unwrap();
         let v = view(&built.raw, BodyFormat::Text, 10_000).unwrap();
         assert_eq!(v.to, vec!["Alice <alice@example.com>"]);
         assert_eq!(v.cc, vec!["Bob <bob@example.com>", "carol@example.com"]);
@@ -339,7 +389,7 @@ mod tests {
     fn reply_prefers_reply_to() {
         let orig = b"From: list@example.com\r\nReply-To: Real <real@example.com>\r\nTo: me@icloud.com\r\nSubject: re: Topic\r\nMessage-ID: <x@example.com>\r\n\r\nbody\r\n";
         let v = view(
-            &build_reply(&me(), &["me@icloud.com".into()], orig, "hi", false)
+            &build_reply(&me(), &["me@icloud.com".into()], orig, "hi", false, &[])
                 .unwrap()
                 .raw,
             BodyFormat::Text,
@@ -354,9 +404,16 @@ mod tests {
     fn reply_to_own_message_goes_to_original_recipients() {
         let orig = b"From: me@icloud.com\r\nTo: Bob <bob@example.com>\r\nSubject: Mine\r\nMessage-ID: <mine@icloud.com>\r\n\r\nbody\r\n";
         let v = view(
-            &build_reply(&me(), &["me@icloud.com".into()], orig, "follow up", false)
-                .unwrap()
-                .raw,
+            &build_reply(
+                &me(),
+                &["me@icloud.com".into()],
+                orig,
+                "follow up",
+                false,
+                &[],
+            )
+            .unwrap()
+            .raw,
             BodyFormat::Text,
             1000,
         )
@@ -382,6 +439,12 @@ mod tests {
         assert!(v.body.contains("See attached."));
         assert_eq!(v.attachments.len(), 1);
         assert_eq!(v.attachments[0].filename.as_deref(), Some("data.csv"));
+        let reported: Vec<(&str, &str)> = built
+            .attachments
+            .iter()
+            .map(|a| (a.filename.as_str(), a.content_type.as_str()))
+            .collect();
+        assert_eq!(reported, [("data.csv", "text/csv")]);
     }
 
     #[test]
@@ -394,11 +457,98 @@ mod tests {
             false,
         )
         .unwrap();
+        assert!(built.attachments.is_empty());
         assert!(
             view(&built.raw, BodyFormat::Text, 10_000)
                 .unwrap()
                 .attachments
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn draft_carries_attachments_with_names_types_and_bytes() {
+        let d = DraftInput {
+            to: vec!["bob@example.com".into()],
+            subject: "Files".into(),
+            body_text: "Two files attached.".into(),
+            body_html: Some("<p>Two files attached.</p>".into()),
+            attachments: vec![
+                file("report.pdf", "application/pdf", b"%PDF-1.4\n"),
+                file("Café menu.txt", "text/plain", b"soup\n"),
+            ],
+            ..Default::default()
+        };
+        let built = build_draft(&me(), &d).unwrap();
+        let v = view(&built.raw, BodyFormat::Text, 10_000).unwrap();
+        assert!(v.body.contains("Two files attached."));
+        let parts: Vec<(Option<&str>, &str)> = v
+            .attachments
+            .iter()
+            .map(|a| (a.filename.as_deref(), a.mime_type.as_str()))
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                (Some("report.pdf"), "application/pdf"),
+                (Some("Café menu.txt"), "text/plain")
+            ]
+        );
+        assert_eq!(attachment(&built.raw, 0).unwrap().contents, b"%PDF-1.4\n");
+        assert_eq!(attachment(&built.raw, 1).unwrap().contents, b"soup\n");
+        assert_eq!(
+            built.attachments,
+            vec![
+                AttachmentSummary {
+                    filename: "report.pdf".into(),
+                    content_type: "application/pdf".into(),
+                    size: 9,
+                },
+                AttachmentSummary {
+                    filename: "Café menu.txt".into(),
+                    content_type: "text/plain".into(),
+                    size: 5,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn draft_without_attachments_is_not_multipart_mixed() {
+        let built = build_draft(
+            &me(),
+            &DraftInput {
+                subject: "Note".into(),
+                body_text: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(built.attachments.is_empty());
+        assert!(!String::from_utf8_lossy(&built.raw).contains("multipart/mixed"));
+    }
+
+    #[test]
+    fn reply_with_attachment_keeps_threading_and_quote() {
+        let built = build_reply(
+            &me(),
+            &["me@icloud.com".into()],
+            ORIGINAL,
+            "Signed copy attached",
+            false,
+            &[file("signed.pdf", "application/pdf", b"%PDF-1.4\n")],
+        )
+        .unwrap();
+        let v = view(&built.raw, BodyFormat::Text, 10_000).unwrap();
+        assert_eq!(v.subject, "Re: Plans");
+        assert_eq!(v.to, vec!["Alice <alice@example.com>"]);
+        assert_eq!(v.in_reply_to, vec!["orig@example.com"]);
+        assert_eq!(v.references, vec!["root@example.com", "orig@example.com"]);
+        assert!(v.body.starts_with("Signed copy attached"));
+        assert!(v.body.contains("> Line one"));
+        assert_eq!(v.attachments.len(), 1);
+        assert_eq!(v.attachments[0].filename.as_deref(), Some("signed.pdf"));
+        assert_eq!(attachment(&built.raw, 0).unwrap().contents, b"%PDF-1.4\n");
+        assert_eq!(built.attachments.len(), 1);
     }
 }
