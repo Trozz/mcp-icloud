@@ -5,7 +5,7 @@
 use mcp_icloud::{SERVICES, load};
 use mcp_server_core::service::ServiceEnv;
 use rmcp::ServerHandler;
-use rmcp::model::Tool;
+use rmcp::model::{Prompt, Tool};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +28,33 @@ fn first_column_names(markdown: &str) -> BTreeSet<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// The lines of a page under `heading` (a `## ` line), up to the next `## ` heading.
+fn section(markdown: &str, heading: &str) -> String {
+    let mut inside = false;
+    markdown
+        .lines()
+        .filter(|line| {
+            if line.starts_with("## ") {
+                inside = *line == heading;
+                return false;
+            }
+            inside
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every service's prompt names, in `SERVICES` order. A new service adds its line here.
+fn registered_prompts() -> Vec<(&'static str, Vec<String>)> {
+    let names =
+        |prompts: Vec<Prompt>| -> Vec<String> { prompts.into_iter().map(|p| p.name).collect() };
+    vec![
+        ("mail", names(mcp_icloud_mail::prompts::list())),
+        ("calendar", names(mcp_icloud_calendar::prompts::list())),
+        ("contacts", names(mcp_icloud_contacts::prompts::list())),
+    ]
 }
 
 fn is_variable(name: &str) -> bool {
@@ -126,7 +153,7 @@ async fn every_registered_tool_is_on_its_service_page() {
     assert!(!read.tools.is_empty());
     for (service, tools) in read.tools {
         let path = format!("services/{service}.md");
-        let documented = first_column_names(&page(&path));
+        let documented = first_column_names(&section(&page(&path), "## Tools"));
         let registered: BTreeSet<String> = tools.into_iter().collect();
         let missing: Vec<&String> = registered.difference(&documented).collect();
         assert!(
@@ -149,6 +176,41 @@ fn the_first_column_parser_reads_backticked_names() {
     assert_eq!(
         names.into_iter().collect::<Vec<_>>(),
         ["A_B".to_string(), "C".to_string()]
+    );
+}
+
+#[test]
+fn the_section_parser_stops_at_the_next_heading() {
+    let md = "# T\n## Tools\n| `a` |\n## Prompts\n| `b` |\n### Sub\n| `c` |\n## Notes\n| `d` |\n";
+    assert_eq!(section(md, "## Tools"), "| `a` |");
+    assert_eq!(section(md, "## Prompts"), "| `b` |\n### Sub\n| `c` |");
+    assert_eq!(section(md, "## Missing"), "");
+}
+
+#[tokio::test]
+async fn every_prompt_is_on_its_service_page_and_on_the_combined_page() {
+    let services: Vec<&str> = read_by_the_server().tools.iter().map(|(s, _)| *s).collect();
+    let prompts = registered_prompts();
+    assert_eq!(
+        prompts.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
+        services,
+        "registered_prompts must name every service, in SERVICES order"
+    );
+    let mut prefixed = BTreeSet::new();
+    for (service, names) in prompts {
+        let path = format!("services/{service}.md");
+        let documented = first_column_names(&section(&page(&path), "## Prompts"));
+        let registered: BTreeSet<String> = names.iter().cloned().collect();
+        assert_eq!(
+            documented, registered,
+            "prompts of {service} versus the Prompts table of docs/src/{path}"
+        );
+        prefixed.extend(names.iter().map(|n| format!("{service}_{n}")));
+    }
+    let combined = first_column_names(&section(&page("services/combined.md"), "## Prompts"));
+    assert_eq!(
+        combined, prefixed,
+        "prefixed prompts versus the Prompts table of docs/src/services/combined.md"
     );
 }
 
