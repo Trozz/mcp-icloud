@@ -65,7 +65,7 @@ fn check_ids(p: &MergeParams) -> error::Result<Vec<String>> {
 #[tool_router(router = merge_router, vis = "pub(crate)")]
 impl ContactsServer {
     #[tool(
-        description = "Merge contacts into one: emails, phones, URLs, addresses, dates and related names the kept contact lacks are added, its empty fields (organization, department, job title, nickname, birthday, and the name when it has none) are filled, notes are combined, groups move to the kept contact, then the merged contacts are deleted. Photos are not copied: photo_not_kept lists merged contacts whose photo was dropped (use copy_contact_photo first, or keep the contact with the photo). The owner's own card can be kept but not merged away.",
+        description = "Merge contacts into one: emails, phones, URLs, addresses, dates and related names the kept contact lacks are added, its empty fields (organization, department, job title, nickname, birthday, and the name when it has none) are filled, notes are combined, groups move to the kept contact, then the merged contacts are deleted. Photos are not copied: photo_not_kept lists merged contacts whose photo was dropped (use copy_contact_photo first, or keep the contact with the photo). Other fields of merged contacts (social profiles, instant messaging, categories, custom X- fields) are not kept. The owner's own card can be kept but not merged away.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,

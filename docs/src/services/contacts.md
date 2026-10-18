@@ -45,7 +45,7 @@ Only the lines a change touches are rewritten. Photos, Apple's own fields and an
 ## Duplicates and merging
 
 - `find_duplicate_contacts` links contacts that share a normalised email address, a phone number (the same last 9 digits; numbers of 6 to 8 digits match on all their digits, shorter ones are ignored) or the same full name of at least two words. Linked contacts form one group. The first contact in each group (one with a photo, then the most details) is a sensible `keep_id`.
-- `merge_contacts` checks everything before writing anything. It adds the emails, phones, URLs, addresses, dates and related names the kept contact lacks, fills its empty single fields, appends notes, moves group memberships to the kept contact, then deletes the merged contacts. Your own card can be kept but never merged away.
+- `merge_contacts` checks everything before writing anything. It adds the emails, phones, URLs, addresses, dates and related names the kept contact lacks, fills its empty single fields, appends notes, moves group memberships to the kept contact, then deletes the merged contacts. Other fields of merged contacts (social profiles, instant messaging, categories, custom X- fields) are not kept. Your own card can be kept but never merged away.
 - Photos are never copied by a merge. When a merged contact had a photo and the kept one has none, the result lists it under `photo_not_kept`; use `copy_contact_photo` first, or keep the contact with the photo.
 - If a later step fails (a group update or a delete), earlier steps are not undone; the result lists what was not done.
 
