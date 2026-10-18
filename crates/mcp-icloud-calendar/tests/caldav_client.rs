@@ -333,3 +333,96 @@ async fn redirect_loops_stop_after_five_hops() {
     assert!(e.to_string().contains("too many redirects"), "{e}");
     assert_eq!(s.seen().len(), 6);
 }
+
+#[tokio::test]
+async fn mkcalendar_sends_its_xml_body_without_depth() {
+    let s = Server::start().await;
+    s.push(reply(201, ""));
+    client(&s.url)
+        .mkcalendar(&s.at("/1234567890/calendars/NEW-1/"), "<m/>".into())
+        .await
+        .unwrap();
+    let seen = s.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].method, "MKCALENDAR");
+    assert_eq!(seen[0].path, "/1234567890/calendars/NEW-1/");
+    assert_eq!(seen[0].headers["authorization"], BASIC);
+    assert_eq!(
+        seen[0].headers["content-type"],
+        "application/xml; charset=utf-8"
+    );
+    assert!(seen[0].headers.get("depth").is_none());
+    assert_eq!(seen[0].body, "<m/>");
+}
+
+#[tokio::test]
+async fn proppatch_sends_its_xml_body() {
+    let s = Server::start().await;
+    s.push(reply(207, MULTI));
+    client(&s.url)
+        .proppatch(&s.at("/1234567890/calendars/work/"), "<p/>".into())
+        .await
+        .unwrap();
+    let seen = s.seen();
+    assert_eq!(seen[0].method, "PROPPATCH");
+    assert_eq!(seen[0].path, "/1234567890/calendars/work/");
+    assert_eq!(
+        seen[0].headers["content-type"],
+        "application/xml; charset=utf-8"
+    );
+    assert_eq!(seen[0].body, "<p/>");
+}
+
+#[tokio::test]
+async fn delete_collection_sends_no_precondition_and_no_body() {
+    let s = Server::start().await;
+    s.push(reply(204, ""));
+    client(&s.url)
+        .delete_collection(&s.at("/1234567890/calendars/work/"))
+        .await
+        .unwrap();
+    let seen = s.seen();
+    assert_eq!(seen[0].method, "DELETE");
+    assert_eq!(seen[0].path, "/1234567890/calendars/work/");
+    assert!(seen[0].headers.get("if-match").is_none());
+    assert!(seen[0].headers.get("if-none-match").is_none());
+    assert!(seen[0].headers.get("depth").is_none());
+    assert_eq!(seen[0].body, "");
+}
+
+#[tokio::test]
+async fn delete_collection_refuses_a_resource_url_before_any_request() {
+    let s = Server::start().await;
+    let e = client(&s.url)
+        .delete_collection(&s.at("/1234567890/calendars/work/a.ics"))
+        .await
+        .unwrap_err();
+    assert_eq!(e.kind(), "internal");
+    assert!(s.seen().is_empty());
+}
+
+#[tokio::test]
+async fn collection_writes_are_never_retried_and_map_statuses() {
+    let s = Server::start().await;
+    let c = client(&s.url);
+    let cal = s.at("/1234567890/calendars/work/");
+    s.push(reply(503, ""));
+    let e = c.mkcalendar(&cal, "<m/>".into()).await.unwrap_err();
+    assert_eq!(e.kind(), "upstream");
+    assert_eq!(s.seen().len(), 1);
+    s.push(reply(503, ""));
+    let e = c.proppatch(&cal, "<p/>".into()).await.unwrap_err();
+    assert_eq!(e.kind(), "upstream");
+    assert_eq!(s.seen().len(), 2);
+    s.push(reply(503, ""));
+    let e = c.delete_collection(&cal).await.unwrap_err();
+    assert_eq!(e.kind(), "upstream");
+    assert_eq!(s.seen().len(), 3);
+    s.push(reply(403, ""));
+    let e = c.proppatch(&cal, "<p/>".into()).await.unwrap_err();
+    assert_eq!(e.kind(), "read_only");
+    s.push(reply(507, ""));
+    let e = c.mkcalendar(&cal, "<m/>".into()).await.unwrap_err();
+    assert_eq!(e.kind(), "quota");
+    assert_eq!(s.seen().len(), 5);
+}

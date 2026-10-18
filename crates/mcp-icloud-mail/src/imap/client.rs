@@ -169,6 +169,7 @@ pub(crate) async fn list_mailboxes(s: &mut ImapSession) -> Result<Vec<ListedMail
                 .attributes()
                 .iter()
                 .any(|a| matches!(a, NameAttribute::NoSelect)),
+            delimiter: n.delimiter().map(str::to_string),
         })
         .collect())
 }

@@ -123,6 +123,19 @@ impl Account {
         }
     }
 
+    /// Whether a calendar other than the one with id `except` is named `name`, ignoring case.
+    pub fn name_taken(&self, name: &str, except: Option<&str>) -> bool {
+        let wanted = name.to_lowercase();
+        self.calendars
+            .iter()
+            .any(|c| Some(c.id.as_str()) != except && c.name.to_lowercase() == wanted)
+    }
+
+    /// URL for a new calendar collection directly in the calendar home.
+    pub fn new_calendar_url(&self, slug: &str) -> Result<Url> {
+        Ok(join(&self.home, &format!("{slug}/"))?)
+    }
+
     /// The calendar-home URL of an event resource and the calendar it belongs to. The event must
     /// be a direct child of a discovered calendar.
     pub fn resolve_event(&self, event_id: &str) -> Result<(Url, &CalendarInfo)> {
@@ -265,6 +278,23 @@ mod tests {
             home,
             me: MyAddresses::new(["mailto:user@example.com"]),
         }
+    }
+
+    #[test]
+    fn names_are_taken_ignoring_case_except_by_the_calendar_itself() {
+        let a = account();
+        assert!(a.name_taken("HOME", None));
+        assert!(a.name_taken("Work", Some("/1234567890/calendars/work-2/")));
+        assert!(!a.name_taken("home", Some("/1234567890/calendars/home/")));
+        assert!(!a.name_taken("Garden", None));
+    }
+
+    #[test]
+    fn new_calendars_live_directly_in_the_home() {
+        assert_eq!(
+            account().new_calendar_url("ABC-1").unwrap().as_str(),
+            "https://p99-caldav.icloud.com/1234567890/calendars/ABC-1/"
+        );
     }
 
     #[test]

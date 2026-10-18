@@ -208,7 +208,7 @@ fn attendees_in(list: &[AttendeeParams]) -> Vec<NewAttendee> {
         .collect()
 }
 
-fn new_uid() -> String {
+pub(crate) fn new_uid() -> String {
     uuid::Uuid::new_v4().to_string().to_uppercase()
 }
 
@@ -218,7 +218,7 @@ fn require_etag(etag: Option<String>) -> error::Result<String> {
     })
 }
 
-fn writable(cal: &CalendarInfo) -> error::Result<()> {
+pub(crate) fn writable(cal: &CalendarInfo) -> error::Result<()> {
     if cal.writable {
         return Ok(());
     }

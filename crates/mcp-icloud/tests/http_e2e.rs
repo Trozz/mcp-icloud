@@ -143,7 +143,7 @@ async fn mail_is_served_at_its_path_with_the_static_token() {
         .unwrap();
     let list = rpc_message(res).await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 12, "{tools:?}");
+    assert_eq!(tools.len(), 14, "{tools:?}");
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 use crate::error::{self, MailError};
 use crate::imap::proto::quote;
 use crate::imap::{ImapClient, MessageSummary, Role, SearchQuery};
+use crate::mail::attach::{self, AttachmentInput};
 use crate::mail::build::{self, BuiltMessage, DraftInput, Identity};
 use crate::mail::envelope::{envelope_recipients, strip_bcc};
 use crate::mail::parse::{self, BodyFormat};
@@ -165,6 +166,22 @@ pub struct CreateMailboxParams {
     pub name: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct RenameMailboxParams {
+    /// Current name of the mailbox (folder).
+    pub name: String,
+    /// New name. No mailbox may have it yet, and it must not be a system mailbox name.
+    pub new_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DeleteMailboxParams {
+    /// Name of the mailbox (folder). It must hold no messages and no child mailboxes.
+    pub name: String,
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct DraftParams {
@@ -182,6 +199,9 @@ pub struct DraftParams {
     pub body_text: String,
     /// Optional HTML body, sent alongside the text body.
     pub body_html: Option<String>,
+    /// Files to attach: at most 10, decoded total up to MAX_ATTACHMENT_BYTES.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentInput>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -197,6 +217,9 @@ pub struct ReplyParams {
     /// Also reply to the original To and Cc recipients.
     #[serde(default)]
     pub reply_all: bool,
+    /// Files to attach: at most 10, decoded total up to MAX_ATTACHMENT_BYTES.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentInput>,
 }
 
 fn yes() -> bool {
@@ -339,6 +362,7 @@ impl MailServer {
             "uid": uid,
             "uidvalidity": uidvalidity,
             "message_id": built.message_id,
+            "attachments": built.attachments,
             "note": "Saved as a draft. Review it in Mail before sending.",
         })))
     }
@@ -689,7 +713,53 @@ impl MailServer {
     }
 
     #[tool(
-        description = "Create a new draft in the Drafts mailbox. Nothing is sent.",
+        description = "Rename a mailbox (folder); its child mailboxes move with it. INBOX and system mailboxes (Sent, Drafts, Trash, Junk, Archive) cannot be renamed, and the new name must be free.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn rename_mailbox(
+        &self,
+        Parameters(p): Parameters<RenameMailboxParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "rename_mailbox");
+        run("rename_mailbox", async {
+            self.imap.rename_mailbox(&p.name, &p.new_name).await?;
+            Ok(json_result(&json!({
+                "mailbox": p.new_name,
+                "renamed_from": p.name,
+                "renamed": true,
+            })))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Delete an empty mailbox (folder) for good. Refuses INBOX, system mailboxes, and mailboxes that hold messages or child mailboxes.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn delete_mailbox(
+        &self,
+        Parameters(p): Parameters<DeleteMailboxParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "delete_mailbox");
+        run("delete_mailbox", async {
+            self.imap.delete_mailbox(&p.name).await?;
+            Ok(json_result(&json!({ "mailbox": p.name, "deleted": true })))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create a new draft in the Drafts mailbox, optionally with attachments (base64). Nothing is sent.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -705,9 +775,11 @@ impl MailServer {
             to = p.to.len(),
             cc = p.cc.len(),
             bcc = p.bcc.len(),
+            attachments = p.attachments.len(),
             "create_draft"
         );
         run("create_draft", async {
+            let attachments = attach::decode(&p.attachments, self.settings.max_attachment_bytes)?;
             let built = build::build_draft(
                 &self.settings.identity,
                 &DraftInput {
@@ -717,6 +789,7 @@ impl MailServer {
                     subject: p.subject,
                     body_text: p.body_text,
                     body_html: p.body_html,
+                    attachments,
                 },
             )?;
             self.save_draft(built).await
@@ -725,7 +798,7 @@ impl MailServer {
     }
 
     #[tool(
-        description = "Create a reply draft to a message (threaded, original quoted). Nothing is sent.",
+        description = "Create a reply draft to a message (threaded, original quoted), optionally with attachments (base64). Nothing is sent.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -737,8 +810,9 @@ impl MailServer {
         &self,
         Parameters(p): Parameters<ReplyParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::debug!(mailbox = %p.mailbox, uid = p.uid, reply_all = p.reply_all, "create_reply_draft");
+        tracing::debug!(mailbox = %p.mailbox, uid = p.uid, reply_all = p.reply_all, attachments = p.attachments.len(), "create_reply_draft");
         run("create_reply_draft", async {
+            let attachments = attach::decode(&p.attachments, self.settings.max_attachment_bytes)?;
             let (_, raw) = self.imap.fetch_raw(&p.mailbox, p.uid, None).await?;
             let identity = &self.settings.identity;
             let built = build::build_reply(
@@ -747,6 +821,7 @@ impl MailServer {
                 &raw,
                 &p.body_text,
                 p.reply_all,
+                &attachments,
             )?;
             self.save_draft(built).await
         })

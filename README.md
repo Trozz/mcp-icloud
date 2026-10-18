@@ -7,7 +7,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server f
 | Endpoint | What it does |
 |---|---|
 | `/mail` | Search, read, organise and draft email; optionally send |
-| `/calendar` | List, search, create, edit and delete events, including recurring ones; find free time; optionally manage invitations |
+| `/calendar` | List, search, create, edit and delete events, including recurring ones; create, rename and delete calendars; find free time; optionally manage invitations |
 | `/contacts` | Search, read, create, edit and delete contacts; groups (iOS Lists); upcoming birthdays and anniversaries; find and merge duplicates |
 | `/mcp` | Every enabled service's tools in one connector, named `<service>_<tool>` |
 

@@ -163,7 +163,7 @@ async fn tools_list_and_call_over_http() {
     let session = handshake(&app).await;
     let list = call(&app, &session, 2, "tools/list", json!({})).await;
     let names = tool_names(&list);
-    assert_eq!(names.len(), 12, "{names:?}");
+    assert_eq!(names.len(), 14, "{names:?}");
     assert!(!names.contains(&"send_draft".to_string()));
     let delete = list["result"]["tools"]
         .as_array()
@@ -172,6 +172,19 @@ async fn tools_list_and_call_over_http() {
         .find(|t| t["name"] == "delete_messages")
         .unwrap();
     assert_eq!(delete["annotations"]["destructiveHint"], true);
+    for (name, destructive) in [("delete_mailbox", true), ("rename_mailbox", false)] {
+        let tool = list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], false, "{name}");
+        assert_eq!(
+            tool["annotations"]["destructiveHint"], destructive,
+            "{name}"
+        );
+    }
 
     let res = call(
         &app,

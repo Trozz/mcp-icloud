@@ -15,8 +15,10 @@ Endpoint `/mail` (or `mail_<tool>` under [`/mcp`](combined.md)). The mail servic
 | `move_messages` | write | Move messages to another mailbox | `mailbox` (default `INBOX`), `uids`, `target_mailbox`, `uidvalidity` |
 | `delete_messages` | write | Move messages to Trash; with `permanent: true`, messages already in Trash are removed for good | `mailbox` (default `INBOX`), `uids`, `permanent`, `uidvalidity` |
 | `create_mailbox` | write | Create a mailbox (folder) | `name` |
-| `create_draft` | write | Save a new draft in Drafts. Nothing is sent | `to`, `cc`, `bcc` (`name@example.com` or `Name <name@example.com>`), `subject`, `body_text`, `body_html` |
-| `create_reply_draft` | write | Save a threaded reply draft with the original quoted. Nothing is sent | `mailbox` (default `INBOX`), `uid`, `body_text`, `reply_all` |
+| `rename_mailbox` | write | Rename a mailbox; its child mailboxes move with it. Refuses INBOX and system mailboxes (Sent, Drafts, Trash, Junk, Archive), and a new name that already exists or is a system mailbox name | `name`, `new_name` |
+| `delete_mailbox` | write | Delete an empty mailbox for good. Refuses INBOX, system mailboxes, and mailboxes that hold messages or child mailboxes | `name` |
+| `create_draft` | write | Save a new draft in Drafts, optionally with attachments. Nothing is sent | `to`, `cc`, `bcc` (`name@example.com` or `Name <name@example.com>`), `subject`, `body_text`, `body_html`, `attachments` (each `filename`, `content_type`, `content_base64`; at most 10, decoded total up to `MAX_ATTACHMENT_BYTES`) |
+| `create_reply_draft` | write | Save a threaded reply draft with the original quoted, optionally with attachments. Nothing is sent | `mailbox` (default `INBOX`), `uid`, `body_text`, `reply_all`, `attachments` (each `filename`, `content_type`, `content_base64`; at most 10, decoded total up to `MAX_ATTACHMENT_BYTES`) |
 | `create_forward_draft` | write | Save a forward draft, optionally with the original attachments. Nothing is sent | `mailbox` (default `INBOX`), `uid`, `to`, `body_text`, `include_attachments` (default `true`) |
 | `send_draft` | write | Send a draft over iCloud SMTP, save a copy to Sent and remove the draft. Registered only with `ICLOUD_ALLOW_SEND=true` | `uid` (in Drafts), `uidvalidity` |
 
@@ -39,6 +41,7 @@ Messages are addressed by mailbox plus UID. Listings also return the mailbox `ui
 - Without `ICLOUD_ALLOW_SEND=true`, `send_draft` is not registered: clients do not see it, and the other tools can only save drafts.
 - `send_draft` only sends messages flagged as drafts in the Drafts mailbox, and sends one message at a time.
 - `ICLOUD_FROM_NAME` sets the display name on drafts; the address is always `ICLOUD_EMAIL`.
+- `create_draft` and `create_reply_draft` take `attachments` as `{filename, content_type, content_base64}` objects: `filename` 1 to 255 characters without `/`, `\` or control characters, `content_type` a plain `type/subtype` such as `application/pdf`, `content_base64` standard base64. If any attachment is invalid or the decoded total is over `MAX_ATTACHMENT_BYTES`, nothing is saved. The result lists each attachment's `filename`, `content_type` and `size`.
 
 ## iCloud notes
 
