@@ -245,6 +245,25 @@ async fn merging_into_a_card_without_a_photo_reports_the_dropped_photo() {
 }
 
 #[tokio::test]
+async fn merge_still_answers_when_the_put_returns_no_etag() {
+    let mut state = merge_state();
+    state.omit_put_etag = true;
+    let fake = FakeCardDav::start(state).await;
+    let v = json(
+        &server(&fake)
+            .merge_contacts(params(
+                json!({"keep_id": PERSON_UID, "merge_ids": [DUP_UID]}),
+            ))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(v["id"], PERSON_UID);
+    assert_eq!(v["not_deleted"], json!([]));
+    assert_eq!(v["contact"]["id"], PERSON_UID, "{v}");
+    assert!(fake.state().card(DUP_FILE).is_none());
+}
+
+#[tokio::test]
 async fn nothing_new_writes_only_the_deletes() {
     let fake = FakeCardDav::start(state()).await;
     let v = json(

@@ -61,6 +61,8 @@ pub struct FakeState {
     pub fail: VecDeque<(&'static str, u16)>,
     /// Answer PROPFIND on `/` with a redirect to `/root/`, which then serves the principal.
     pub redirect_root: bool,
+    /// Answer PUT without an `ETag` header.
+    pub omit_put_etag: bool,
 }
 
 impl FakeState {
@@ -77,6 +79,7 @@ impl FakeState {
             log: Vec::new(),
             fail: VecDeque::new(),
             redirect_root: false,
+            omit_put_etag: false,
         }
     }
 
@@ -326,6 +329,9 @@ async fn handle(
             } else {
                 StatusCode::NO_CONTENT
             };
+            if s.omit_put_etag {
+                return code.into_response();
+            }
             (code, [("etag", etag)]).into_response()
         }
         "DELETE" => {

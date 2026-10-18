@@ -166,7 +166,16 @@ impl ContactsServer {
             .filter(|m| m.contact.has_photo && !kept.has_photo)
             .map(|m| &m.id)
             .collect();
-        let contact: Value = serde_json::to_value(idx.contact(&keep_uid)?).unwrap_or_default();
+        if idx.contact(&keep_uid).is_err()
+            && let Err(e) = idx.refresh(self.store.client()).await
+        {
+            tracing::warn!(kind = e.kind(), "the index was not refreshed after a merge");
+        }
+        let contact: Value = idx
+            .contact(&keep_uid)
+            .ok()
+            .and_then(|c| serde_json::to_value(c).ok())
+            .unwrap_or_default();
         Ok(json_result(&json!({
             "id": keep_uid,
             "merged": merged_uids,
