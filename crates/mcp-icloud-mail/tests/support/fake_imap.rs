@@ -27,7 +27,7 @@ pub struct FakeState {
     pub mailboxes: BTreeMap<String, FakeMailbox>,
     pub capabilities: Vec<String>,
     /// One-shot failures: command word (LOGIN, SELECT, STATUS, LIST, SEARCH, FETCH, STORE, MOVE,
-    /// COPY, EXPUNGE, APPEND, CREATE) -> text sent back as `TAG NO <text>`.
+    /// COPY, EXPUNGE, APPEND, CREATE, RENAME, DELETE) -> text sent back as `TAG NO <text>`.
     pub fail: HashMap<String, String>,
     /// Every command line received, without the tag.
     pub log: Vec<String>,
@@ -628,6 +628,43 @@ fn respond(
                     },
                 );
                 ok(tag)
+            }
+        }
+        "RENAME" => {
+            let from = t.get(1).cloned().unwrap_or_default();
+            let to = t.get(2).cloned().unwrap_or_default();
+            if !st.mailboxes.contains_key(&from) {
+                no(tag, "[NONEXISTENT] no such mailbox")
+            } else if st.mailboxes.contains_key(&to) {
+                no(tag, "[ALREADYEXISTS] mailbox exists")
+            } else {
+                let child = format!("{from}/");
+                let moving: Vec<String> = st
+                    .mailboxes
+                    .keys()
+                    .filter(|k| **k == from || k.starts_with(&child))
+                    .cloned()
+                    .collect();
+                for old in moving {
+                    let mb = st.mailboxes.remove(&old).expect("listed above");
+                    st.mailboxes
+                        .insert(format!("{to}{}", &old[from.len()..]), mb);
+                }
+                *selected = None;
+                ok(tag)
+            }
+        }
+        "DELETE" => {
+            let name = t.get(1).cloned().unwrap_or_default();
+            if name.eq_ignore_ascii_case("INBOX") {
+                no(tag, "[CANNOT] INBOX cannot be deleted")
+            } else if st.mailboxes.remove(&name).is_some() {
+                if selected.as_deref() == Some(name.as_str()) {
+                    *selected = None;
+                }
+                ok(tag)
+            } else {
+                no(tag, "[NONEXISTENT] no such mailbox")
             }
         }
         "APPEND" => {

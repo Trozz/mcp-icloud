@@ -25,6 +25,7 @@ use std::time::Instant;
 use tracing::Instrument;
 
 pub mod invite;
+pub mod manage;
 pub mod write;
 
 pub const MAX_RANGE_DAYS: i64 = 366;
@@ -130,6 +131,16 @@ pub(crate) fn json_result(v: &Value) -> CallToolResult {
     CallToolResult::success(vec![ContentBlock::text(text)])
 }
 
+/// A calendar as `list_calendars` shows it.
+pub(crate) fn calendar_json(c: &CalendarInfo) -> Value {
+    json!({
+        "id": c.id,
+        "name": c.name,
+        "color": c.color,
+        "writable": c.writable,
+    })
+}
+
 /// Runs one tool: span, metrics, and mapping of `CalError` to a tool error (`isError: true`)
 /// whose text starts with the error kind, e.g. `conflict: ...`.
 pub(crate) async fn run(
@@ -206,7 +217,7 @@ fn same_instant(a: &When, b: &When, zone: Tz) -> bool {
 
 impl CalendarServer {
     pub fn new(dir: Arc<Directory>, settings: Arc<ToolSettings>) -> Self {
-        let mut tool_router = Self::read_router() + Self::write_router();
+        let mut tool_router = Self::read_router() + Self::write_router() + Self::manage_router();
         if settings.allow_invites {
             tool_router += Self::invite_router();
         }
@@ -327,18 +338,7 @@ impl CalendarServer {
     pub async fn list_calendars(&self) -> Result<CallToolResult, McpError> {
         run("list_calendars", async {
             let account = self.dir.refresh().await?;
-            let calendars: Vec<Value> = account
-                .calendars
-                .iter()
-                .map(|c| {
-                    json!({
-                        "id": c.id,
-                        "name": c.name,
-                        "color": c.color,
-                        "writable": c.writable,
-                    })
-                })
-                .collect();
+            let calendars: Vec<Value> = account.calendars.iter().map(calendar_json).collect();
             Ok(json_result(&json!({ "calendars": calendars })))
         })
         .await
@@ -569,16 +569,44 @@ impl CalendarServer {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for CalendarServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(
-                Implementation::new(crate::config::SERVICE_NAME, crate::VERSION).with_icons(
-                    mcp_server_core::service::icons(
-                        include_bytes!("../../assets/icon.png"),
-                        include_str!("../../assets/icon.svg"),
-                    ),
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_prompts()
+                .enable_tools()
+                .build(),
+        )
+        .with_server_info(
+            Implementation::new(crate::config::SERVICE_NAME, crate::VERSION).with_icons(
+                mcp_server_core::service::icons(
+                    include_bytes!("../../assets/icon.png"),
+                    include_str!("../../assets/icon.svg"),
                 ),
-            )
-            .with_instructions(INSTRUCTIONS)
+            ),
+        )
+        .with_instructions(INSTRUCTIONS)
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<rmcp::model::ListPromptsResult, McpError> {
+        Ok(rmcp::model::ListPromptsResult::with_all_items(
+            crate::prompts::list(),
+        ))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: rmcp::model::GetPromptRequestParams,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<rmcp::model::GetPromptResponse, McpError> {
+        let prefix = mcp_server_core::prompt::tool_prefix(&context);
+        let today = Utc::now()
+            .with_timezone(&self.settings.zones.active())
+            .date_naive();
+        crate::prompts::get(&request.name, request.arguments.as_ref(), prefix, today)
+            .map(Into::into)
     }
 }
 

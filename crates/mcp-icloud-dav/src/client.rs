@@ -274,6 +274,37 @@ impl DavClient {
         Ok(())
     }
 
+    /// MKCALENDAR (RFC 4791) with an `mkcalendar` body; iCloud answers 201 Created.
+    pub async fn mkcalendar(&self, url: &Url, body: String) -> Result<()> {
+        let method = Method::from_bytes(b"MKCALENDAR").expect("valid method");
+        self.send(method, url, HeaderMap::new(), Some(body), false)
+            .await?;
+        Ok(())
+    }
+
+    /// PROPPATCH with a `propertyupdate` body. A 207 answer is success here, even when a
+    /// property inside it was refused; callers that need certainty read the property back.
+    pub async fn proppatch(&self, url: &Url, body: String) -> Result<()> {
+        let method = Method::from_bytes(b"PROPPATCH").expect("valid method");
+        self.send(method, url, HeaderMap::new(), Some(body), false)
+            .await?;
+        Ok(())
+    }
+
+    /// DELETE a collection and everything in it, without a precondition. Only collection URLs
+    /// (path ending in `/`) are accepted.
+    pub async fn delete_collection(&self, url: &Url) -> Result<()> {
+        if !url.path().ends_with('/') {
+            return Err(DavError::Internal(format!(
+                "delete_collection needs a collection URL, not {}",
+                url.path()
+            )));
+        }
+        self.send(Method::DELETE, url, HeaderMap::new(), None, false)
+            .await?;
+        Ok(())
+    }
+
     async fn send(
         &self,
         method: Method,

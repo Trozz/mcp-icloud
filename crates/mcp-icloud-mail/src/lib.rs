@@ -3,6 +3,7 @@ pub mod config;
 pub mod error;
 pub mod imap;
 pub mod mail;
+pub mod prompts;
 pub mod service;
 pub mod smtp;
 pub mod tools;

@@ -1,6 +1,7 @@
 //! In-memory CalDAV server shaped like iCloud: a principal, a calendar home with event
 //! calendars, a VTODO-only list, a scheduling inbox and outbox. Real ETags and If-Match /
-//! If-None-Match semantics. Every request is logged for assertions.
+//! If-None-Match semantics; calendars can be made (MKCALENDAR), patched (PROPPATCH), listed
+//! (Depth 1 PROPFIND) and deleted. Every request is logged for assertions.
 //!
 //! `calendar-query` returns every resource of the calendar (no time-range filtering): the
 //! server under test expands recurrences and filters by range itself.
@@ -81,6 +82,8 @@ pub struct FakeState {
     pub report_delay: Duration,
     pub reports_in_flight: usize,
     pub max_reports_in_flight: usize,
+    /// Answer PROPPATCH with 207 and a 403 propstat, changing nothing (a refused property).
+    pub ignore_proppatch: bool,
     etag_counter: u64,
 }
 
@@ -125,6 +128,7 @@ impl FakeState {
             report_delay: Duration::ZERO,
             reports_in_flight: 0,
             max_reports_in_flight: 0,
+            ignore_proppatch: false,
             etag_counter: 0,
         }
     }
@@ -356,6 +360,17 @@ fn respond(
                 }
                 return multistatus(&out);
             }
+            if let Some(cal) = calendar_of_collection(&s, path) {
+                let c = &s.calendars[&cal];
+                let mut out = vec![collection_xml(&cal, c)];
+                for (name, r) in &c.resources {
+                    out.push(ok_propstat(
+                        &format!("{HOME}{cal}/{name}"),
+                        &format!("<getetag>{}</getetag>", xml_escape(&r.etag)),
+                    ));
+                }
+                return multistatus(&out);
+            }
             status(404)
         }
         "REPORT" => {
@@ -425,6 +440,13 @@ fn respond(
             (code, [("etag", etag)]).into_response()
         }
         "DELETE" => {
+            if let Some(cal) = calendar_of_collection(&s, path) {
+                if !s.calendars[&cal].writable {
+                    return status(403);
+                }
+                s.calendars.remove(&cal);
+                return status(204);
+            }
             let Some((cal, name)) = split_resource(path) else {
                 return status(404);
             };
@@ -442,6 +464,58 @@ fn respond(
             s.calendars.get_mut(&cal).unwrap().resources.remove(&name);
             status(204)
         }
+        "MKCALENDAR" => {
+            let Some(slug) = path
+                .strip_prefix(HOME)
+                .and_then(|rest| rest.strip_suffix('/'))
+                .filter(|slug| !slug.is_empty() && !slug.contains('/'))
+            else {
+                return status(403);
+            };
+            if s.calendars.contains_key(slug) {
+                return status(405);
+            }
+            let text = String::from_utf8_lossy(body).into_owned();
+            let components = if text.contains(r#"name="VEVENT""#) {
+                vec!["VEVENT"]
+            } else {
+                Vec::new()
+            };
+            let name = element(&text, "displayname").unwrap_or_default();
+            let calendar = FakeCalendar {
+                color: element(&text, "calendar-color"),
+                components,
+                ..FakeCalendar::events(&name, true)
+            };
+            s.calendars.insert(slug.to_string(), calendar);
+            status(201)
+        }
+        "PROPPATCH" => {
+            let Some(cal) = calendar_of_collection(&s, path) else {
+                return status(404);
+            };
+            if !s.calendars[&cal].writable {
+                return status(403);
+            }
+            let href = format!("{HOME}{cal}/");
+            if s.ignore_proppatch {
+                return multistatus(&[format!(
+                    "<response><href>{href}</href><propstat><prop><displayname/></prop><status>HTTP/1.1 403 Forbidden</status></propstat></response>"
+                )]);
+            }
+            let text = String::from_utf8_lossy(body).into_owned();
+            let c = s.calendars.get_mut(&cal).unwrap();
+            if let Some(name) = element(&text, "displayname") {
+                c.name = name;
+            }
+            if let Some(color) = element(&text, "calendar-color") {
+                c.color = Some(color);
+            }
+            multistatus(&[ok_propstat(
+                &href,
+                "<displayname/><calendar-color xmlns=\"http://apple.com/ns/ical/\"/>",
+            )])
+        }
         _ => status(405),
     }
 }
@@ -455,4 +529,19 @@ fn split_resource(path: &str) -> Option<(String, String)> {
     let rest = path.strip_prefix(HOME)?;
     let (cal, name) = rest.split_once('/')?;
     (!name.is_empty() && !name.contains('/')).then(|| (cal.to_string(), name.to_string()))
+}
+
+/// The unescaped text of the first `<prefix:local>` element of a request body.
+fn element(body: &str, local: &str) -> Option<String> {
+    let open = format!(":{local}>");
+    let start = body.find(&open)? + open.len();
+    let end = start + body[start..].find("</")?;
+    Some(
+        body[start..end]
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&"),
+    )
 }

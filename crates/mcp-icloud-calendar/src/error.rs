@@ -10,6 +10,9 @@ pub enum CalError {
     NotFound(String),
     #[error("the event changed since it was read; re-read it and retry")]
     Conflict,
+    /// A name that another calendar already has.
+    #[error("{0}")]
+    Exists(String),
     #[error("the iCloud storage quota is exceeded")]
     Quota,
     #[error("{0}")]
@@ -27,6 +30,7 @@ impl CalError {
             CalError::ReadOnly(_) => "read_only",
             CalError::NotFound(_) => "not_found",
             CalError::Conflict => "conflict",
+            CalError::Exists(_) => "conflict",
             CalError::Quota => "quota",
             CalError::Validation(_) => "validation",
             CalError::Upstream(_) => "upstream",
@@ -67,6 +71,10 @@ mod tests {
             (CalError::ReadOnly("Home".into()), "read_only"),
             (CalError::NotFound("x".into()), "not_found"),
             (CalError::Conflict, "conflict"),
+            (
+                CalError::Exists("a calendar named \"Work\" already exists".into()),
+                "conflict",
+            ),
             (CalError::Quota, "quota"),
             (CalError::invalid("bad"), "validation"),
             (CalError::Upstream("500".into()), "upstream"),

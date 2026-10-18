@@ -50,7 +50,7 @@ General rules:
 | `ICLOUD_USERNAME` | no | `ICLOUD_EMAIL` | `you` | IMAP and SMTP login, if it differs from the address |
 | `ICLOUD_FROM_NAME` | no | | `Alex Example` | Display name on drafts |
 | `ICLOUD_ALLOW_SEND` | no | `false` | `true` | Registers the `send_draft` tool. Without it nothing can be sent |
-| `MAX_ATTACHMENT_BYTES` | no | `10485760` (10 MiB) | `20971520` | Largest attachment `get_attachment` returns |
+| `MAX_ATTACHMENT_BYTES` | no | `10485760` (10 MiB) | `20971520` | Largest attachment `get_attachment` returns, and the largest decoded total of the attachments on one `create_draft` or `create_reply_draft` |
 | `CACHE_MAX_BYTES` | no | `67108864` (64 MiB) | `0` | In-memory cache of message bodies; `0` disables it |
 | `IMAP_IDLE_TIMEOUT` | no | `600` | `300` | Seconds before an idle IMAP connection is closed |
 

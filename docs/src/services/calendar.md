@@ -15,11 +15,32 @@ Endpoint `/calendar` (or `calendar_<tool>` under [`/mcp`](combined.md)). The cal
 | `create_event` | write | Create a timed or all-day event, optionally recurring, with alerts and (when allowed) attendees | `calendar`, `summary`, `start` and `end`, or `start_date` and `end_date` (inclusive), `location`, `description`, `timezone`, `recurrence`, `alerts_minutes_before`, `attendees` |
 | `update_event` | write | Change only the fields you pass, for the whole series, one occurrence, or this and following occurrences | `event_id`, `scope` (`series`, `occurrence`, `this_and_following`), `occurrence_start`, and any field of `create_event` |
 | `delete_event` | write | Delete the series, one occurrence, or this and following occurrences | `event_id`, `scope`, `occurrence_start` |
+| `create_calendar` | write | Create a calendar for events. The name must differ from every calendar's name, ignoring case. Returns the calendar as `list_calendars` shows it | `name`, `color` (`#RRGGBB`) |
+| `rename_calendar` | write | Rename a calendar, change its colour, or both. The new name must not be another calendar's name, ignoring case. Read-only calendars are refused | `calendar`, `new_name`, `color` (`#RRGGBB`; give at least one of the two) |
+| `delete_calendar` | write | Delete an empty calendar. Refused while it holds any event or other item, and for the only writable calendar. The emptiness check and the delete are two requests, so an event added in between is deleted with it | `calendar` |
 | `respond_to_invitation` | write | Accept, decline or tentatively accept an invitation; iCloud sends the reply to the organizer. Registered only with `ICLOUD_ALLOW_INVITES=true` | `event_id`, `response` (`accepted`, `declined`, `tentative`), `occurrence_start` |
+
+## Prompts
+
+Prompts are ready-made requests a client can offer you. They tell the model which tools to call and in what order; they change nothing by themselves.
+
+| Prompt | Arguments | What it does |
+|---|---|---|
+| `plan_week` | `start` (`YYYY-MM-DD`, default today in the active time zone) | Lays out the seven days from `start`, points out overlapping and back-to-back events, lists invitations waiting for your reply and suggests free slots with `find_free_time`. Replies to an invitation only with the answer you give |
+
+Arguments are text; a blank argument takes its default, and an invalid one (a `start` that is not a `YYYY-MM-DD` date) is refused. Replying to invitations needs `ICLOUD_ALLOW_INVITES=true`; without it the model is told to say so and skip that step.
 
 ## Addressing events
 
 Events are addressed by `event_id` as `list_events` returns it. One occurrence of a recurring event is additionally addressed by `occurrence_start`, exactly as `list_events` returns it. Every change is a conditional write: if the event changed in iCloud since it was read, the tool returns a `conflict` error instead of overwriting it.
+
+## Managing calendars
+
+- `create_calendar` makes a calendar that holds events (not reminders) under a new id in your calendar home. Colours are given as `#RRGGBB`; iCloud stores them with an alpha channel, so `list_calendars` shows them as `#RRGGBBFF`.
+- Calendar names are compared ignoring case: `create_calendar` and `rename_calendar` return a `conflict` error for a name another calendar already has. Changing only the case of a calendar's own name is allowed.
+- Read-only calendars, such as subscribed or read-only shared calendars, cannot be renamed or deleted (`read_only`).
+- `delete_calendar` only deletes an empty calendar: it first lists what the calendar holds and returns a `validation` error while it holds any event, reminder or other item. It also refuses to delete your only writable calendar.
+- The emptiness check and the delete are two separate requests to iCloud. An event added to the calendar between them, for example from your phone, is deleted together with the calendar.
 
 ## Recurrence and alerts
 
