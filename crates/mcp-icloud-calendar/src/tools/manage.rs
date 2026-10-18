@@ -3,8 +3,9 @@
 use super::write::{new_uid, writable};
 use super::{CalendarServer, calendar_json, json_result, run};
 use crate::caldav::discovery::Account;
-use crate::caldav::xml::{mkcalendar, propertyupdate};
+use crate::caldav::xml::{mkcalendar, propertyupdate, propfind_members};
 use crate::error::{self, CalError};
+use mcp_icloud_dav::discovery::join;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -30,6 +31,13 @@ pub struct RenameCalendarParams {
     pub new_name: Option<String>,
     /// New colour as #RRGGBB, for example #1BADF8.
     pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DeleteCalendarParams {
+    /// Calendar name or id from list_calendars. It must hold no events or other items.
+    pub calendar: String,
 }
 
 /// A calendar name: trimmed, not empty, without control characters.
@@ -145,6 +153,39 @@ impl CalendarServer {
             &json!({"updated": true, "calendar": calendar_json(updated)}),
         ))
     }
+
+    async fn remove_calendar(&self, p: DeleteCalendarParams) -> error::Result<CallToolResult> {
+        let account = self.dir.refresh().await?;
+        let cal = account.calendar(&p.calendar)?;
+        writable(cal)?;
+        if account.calendars.iter().filter(|c| c.writable).count() < 2 {
+            return Err(CalError::invalid(format!(
+                "{} is the only writable calendar, so it cannot be deleted",
+                cal.name
+            )));
+        }
+        let client = self.dir.client();
+        let (answered, members) = client.propfind(&cal.url, 1, propfind_members()).await?;
+        let own = answered.path().trim_end_matches('/');
+        let items = members
+            .iter()
+            .filter(|r| {
+                !join(&answered, &r.href).is_ok_and(|u| u.path().trim_end_matches('/') == own)
+            })
+            .count();
+        if items > 0 {
+            let noun = if items == 1 { "item" } else { "items" };
+            return Err(CalError::invalid(format!(
+                "{} is not empty ({items} {noun})",
+                cal.name
+            )));
+        }
+        client.delete_collection(&cal.url).await?;
+        self.dir.invalidate().await;
+        Ok(json_result(
+            &json!({"deleted": true, "id": cal.id, "name": cal.name}),
+        ))
+    }
 }
 
 #[tool_router(router = manage_router, vis = "pub(crate)")]
@@ -181,6 +222,23 @@ impl CalendarServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!("rename_calendar");
         run("rename_calendar", self.patch_calendar(p)).await
+    }
+
+    #[tool(
+        description = "Delete an empty calendar. Refused while it holds any event or other item, and for the only writable calendar. The emptiness check and the delete are two requests: an event added in between is deleted with the calendar.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn delete_calendar(
+        &self,
+        Parameters(p): Parameters<DeleteCalendarParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!("delete_calendar");
+        run("delete_calendar", self.remove_calendar(p)).await
     }
 }
 

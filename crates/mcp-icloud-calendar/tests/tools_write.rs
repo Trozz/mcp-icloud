@@ -59,6 +59,7 @@ async fn write_tools_are_registered_without_invitation_replies() {
         [
             "create_calendar",
             "create_event",
+            "delete_calendar",
             "delete_event",
             "find_free_time",
             "get_event",

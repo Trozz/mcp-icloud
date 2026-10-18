@@ -214,3 +214,120 @@ async fn a_change_icloud_did_not_apply_is_an_upstream_error() {
         "upstream: iCloud error: iCloud accepted the change but did not apply it"
     );
 }
+
+#[tokio::test]
+async fn delete_removes_an_empty_calendar() {
+    let fake = fake().await;
+    let s = server(&fake, false);
+    let created = json(
+        &s.create_calendar(params(json!({"name": "ZZ MCP Probe"})))
+            .await
+            .unwrap(),
+    );
+    let id = created["calendar"]["id"].as_str().unwrap().to_string();
+    let v = json(
+        &s.delete_calendar(params(json!({"calendar": id})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        v,
+        json!({"deleted": true, "id": id, "name": "ZZ MCP Probe"})
+    );
+    {
+        let st = fake.state();
+        let check = st
+            .log
+            .iter()
+            .find(|l| l.method == "PROPFIND" && l.path == id)
+            .unwrap();
+        assert_eq!(check.depth.as_deref(), Some("1"));
+        let del = st.log.iter().find(|l| l.method == "DELETE").unwrap();
+        assert_eq!(del.path, id);
+        assert_eq!(del.if_match, None);
+    }
+    let listed = json(&s.list_calendars().await.unwrap());
+    assert!(
+        !listed["calendars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_calendar_with_any_item_is_not_deleted() {
+    let fake = fake().await;
+    let s = server(&fake, false);
+    let e = error_text(
+        &s.delete_calendar(params(json!({"calendar": "Work"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(e, "validation: Work is not empty (1 item)");
+    fake.state().put(
+        "work",
+        "task-1.ics",
+        "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Example Corp//Calendar//EN\nBEGIN:VTODO\nUID:task-1\nDTSTAMP:20261001T080000Z\nSUMMARY:Synthetic task\nEND:VTODO\nEND:VCALENDAR\n",
+    );
+    let e = error_text(
+        &s.delete_calendar(params(json!({"calendar": "work"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(e, "validation: Work is not empty (2 items)");
+    assert_eq!(writes(&fake), 0);
+    assert!(fake.state().calendars.contains_key("work"));
+}
+
+#[tokio::test]
+async fn read_only_and_unknown_calendars_are_refused() {
+    let fake = fake().await;
+    let s = server(&fake, false);
+    let e = error_text(
+        &s.delete_calendar(params(json!({"calendar": "Holidays"})))
+            .await
+            .unwrap(),
+    );
+    assert!(e.starts_with("read_only:"), "{e}");
+    let e = error_text(
+        &s.delete_calendar(params(json!({"calendar": "Garden"})))
+            .await
+            .unwrap(),
+    );
+    assert!(e.starts_with("not_found:"), "{e}");
+    let e = error_text(
+        &s.delete_calendar(params(
+            json!({"calendar": "/1234567890/calendars/home/x.ics"}),
+        ))
+        .await
+        .unwrap(),
+    );
+    assert!(e.starts_with("not_found:"), "{e}");
+    assert_eq!(writes(&fake), 0);
+}
+
+#[tokio::test]
+async fn the_only_writable_calendar_is_never_deleted() {
+    let mut st = FakeState::icloud_like();
+    st.calendars.remove("work");
+    let fake = FakeCalDav::start(st).await;
+    let e = error_text(
+        &server(&fake, false)
+            .delete_calendar(params(json!({"calendar": "Home"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        e,
+        "validation: Home is the only writable calendar, so it cannot be deleted"
+    );
+    let st = fake.state();
+    assert!(
+        !st.log
+            .iter()
+            .any(|l| l.method == "PROPFIND" && l.path == "/1234567890/calendars/home/")
+    );
+    assert_eq!(st.count("DELETE"), 0);
+}
