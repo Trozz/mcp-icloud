@@ -6,7 +6,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server f
 |---|---|---|
 | Mail | `/mail` | Search, read, organise and draft email; optionally send |
 | Calendar | `/calendar` | List, search, create, edit and delete events, including recurring ones; find free time; optionally manage invitations |
-| Contacts | `/contacts` | Search, read, create, edit and delete contacts; manage groups (iOS Lists) |
+| Contacts | `/contacts` | Search, read, create, edit and delete contacts; manage groups (iOS Lists); upcoming birthdays and anniversaries |
 
 - Single static Rust binary, shipped as a `FROM scratch` container image.
 - TLS end to end: the server terminates TLS itself, and every connection to Apple is verified.
@@ -86,6 +86,7 @@ Reminders are not available: Apple no longer exposes upgraded iCloud Reminders o
 | `create_contact`, `update_contact` | Create a contact, or change only the fields you pass (`""` clears one). A list you pass (`emails`, `phones`, `urls`, `addresses`, `dates`, `related`) replaces that whole list; entries you pass back unchanged keep their exact lines |
 | `delete_contact` | Delete a contact and remove it from its groups. Your own card cannot be deleted |
 | `create_group`, `update_group`, `delete_group` | Create, rename, add or remove members of, or delete a group. Deleting a group keeps its contacts |
+| `upcoming_dates` | Birthdays, anniversaries and other dates from today to `days` ahead (default 30, at most 366), soonest first, with the days from today and, when the year is known, the age or number of years. "Today" is the date in `CONTACTS_TIMEZONE`; 29 February falls on 28 February in other years |
 
 Contacts and groups are addressed by `id`, as `search_contacts` and `list_groups` return it. Labels are plain words: `home`, `work`, `other`, `mobile`, `iPhone`, `main`, `pager`, `home fax`, `work fax`, `home page`, `anniversary`, relations such as `mother` or `friend`, or any custom text. Birthdays and dates are `YYYY-MM-DD`, or `--MM-DD` without a year.
 
@@ -215,6 +216,7 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `CARDDAV_URL` | no | `https://contacts.icloud.com` | CardDAV entry point. Must be `https`, except a loopback address for testing |
+| `CONTACTS_TIMEZONE` | no | `UTC` | IANA time zone that decides "today" for `upcoming_dates`, for example `Europe/London`. An unknown name stops startup |
 
 ## TLS
 
