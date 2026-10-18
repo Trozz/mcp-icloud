@@ -177,7 +177,7 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 | `BIND_ADDR` | no | `0.0.0.0:8443` | Listen address. Must listen on loopback (`0.0.0.0` does) so `--healthcheck` can connect to `127.0.0.1` |
 | `TLS_CERT_PATH`, `TLS_KEY_PATH` | no | | PEM certificate chain and key. Reloaded automatically when the files change |
 | `INSECURE_HTTP` | no | `false` | Serve plain HTTP without TLS |
-| `LOG_LEVEL` | no | `info` | Log filter, for example `info,mcp_icloud_mail::imap=debug` or `info,mcp_icloud_calendar=debug` |
+| `LOG_LEVEL` | no | `info` | Log filter, for example `info,mcp_icloud_mail::imap=debug`, `info,mcp_icloud_calendar=debug` or `info,mcp_icloud_contacts=debug` |
 | `LOG_FORMAT` | no | `json` | `json` or `pretty` |
 | `DEBUG` | no | off | Debug logging with content redacted. Never logs IMAP protocol lines or credentials |
 | `DEBUG_UNSAFE_LOG_CONTENT` | no | off | Also logs full tool results and CalDAV and CardDAV bodies, including message, event and contact content. Credentials are never logged |

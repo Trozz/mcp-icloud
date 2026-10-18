@@ -27,7 +27,8 @@ pub enum Query {
 
 impl Query {
     /// A query of at least 6 digits (spaces and `+()-./` ignored) is a phone number; anything else
-    /// is words. None for an empty query.
+    /// is words. None for an empty query. A query without a letter or digit has no words and
+    /// matches nobody.
     pub fn parse(q: &str) -> Option<Query> {
         let q = q.trim();
         if q.is_empty() {
@@ -39,6 +40,9 @@ impl Query {
             .collect();
         if compact.len() >= 6 && compact.chars().all(|c| c.is_ascii_digit()) {
             return Some(Query::Phone(compact));
+        }
+        if !q.chars().any(char::is_alphanumeric) {
+            return Some(Query::Words(Vec::new()));
         }
         Some(Query::Words(
             normalize(q)
@@ -89,9 +93,10 @@ pub fn matches(c: &Contact, q: &Query) -> bool {
         Query::Phone(p) => c.phones.iter().any(|n| phone_matches(p, &n.value)),
         Query::Words(words) => {
             let texts = texts(c);
-            words
-                .iter()
-                .all(|w| texts.iter().any(|t| t.contains(w.as_str())))
+            !words.is_empty()
+                && words
+                    .iter()
+                    .all(|w| texts.iter().any(|t| t.contains(w.as_str())))
         }
     }
 }
@@ -246,5 +251,14 @@ mod tests {
         ];
         assert_eq!(ids(&search(&all, None)), ["a", "b", "c"]);
         assert_eq!(ids(&search(&all, Some("   "))), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_query_without_letters_or_digits_matches_nobody() {
+        let all = [contact("a", "Ann-Marie"), contact("b", "Bo")];
+        for q in ["-", "+", "()", "...", "\u{301}"] {
+            assert!(search(&all, Some(q)).is_empty(), "{q:?}");
+        }
+        assert_eq!(ids(&search(&all, Some("ann-"))), ["a"]);
     }
 }

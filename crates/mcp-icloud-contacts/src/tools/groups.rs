@@ -138,6 +138,7 @@ impl ContactsServer {
             let mut idx = self.store.open().await?;
             let (card, tree) = idx.group_card(&p.id)?;
             let (href, etag, mut tree) = (card.href.clone(), card.etag.clone(), tree.clone());
+            let before = tree.clone();
             let add = contact_ids(&idx, &p.add_ids.unwrap_or_default(), "add_ids")?;
             let listed: Vec<String> = named(&tree, GROUP_MEMBER)
                 .filter_map(|(_, m)| member_uid(m.value()))
@@ -158,6 +159,9 @@ impl ContactsServer {
             }
             add_members(&mut tree, &add);
             remove_members(&mut tree, &remove);
+            if tree == before {
+                return group_result(&idx, &p.id);
+            }
             touch(&mut tree, Utc::now());
             idx.put(
                 self.store.client(),
