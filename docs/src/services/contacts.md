@@ -50,6 +50,13 @@ Only the lines a change touches are rewritten. Photos, Apple's own fields and an
 - Photos are never copied by a merge. When a merged contact had a photo and the kept one has none, the result lists it under `photo_not_kept`; use `copy_contact_photo` first, or keep the contact with the photo.
 - If a later step fails (a group update or a delete), earlier steps are not undone; the result lists what was not done.
 
+## Export
+
+- `export_vcard` returns a JSON summary (`id`, `kind`, `display_name`, `cards`, `missing_members`, `bytes`) and the vCard text as a `text/vcard` resource at `icloud-contacts://export/<id>.vcf` (a space, `/` or `%` in the id is percent-encoded).
+- A contact comes exactly as iCloud stores it: Apple's folding, photo lines and own fields included. The server writes the card it holds back unchanged; the only differences readers could see are in text iCloud never stores: `BEGIN` and `END` lines are written in capitals, line endings are CRLF, blank lines are dropped and the last line ends with a line break.
+- A group gives every member's card, one after another, in the group's member order, each member once. The group's own card is not included. Member ids that are not readable contacts (deleted contacts, other groups, cards the server cannot parse) are skipped and listed under `missing_members`. A group without readable members gives an empty file.
+- There is no size limit beyond what iCloud stores, and card text is never logged.
+
 ## iCloud notes
 
 - iCloud does not enforce `If-Match` on contact deletes, so deletes cannot be conditional. The server re-reads the address book at the start of every call and deletes immediately after, so only a change made on another device in those milliseconds could be lost.

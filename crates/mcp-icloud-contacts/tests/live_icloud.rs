@@ -3,8 +3,9 @@
 //!   op run --env-file="${APP_ENV:-$HOME/docker/mcp-icloud/app.env}" -- \
 //!     cargo test -p mcp-icloud-contacts --test live_icloud -- --ignored --nocapture --test-threads=1
 //! The round trips create contacts "ZZ MCP Probe" and a group "ZZ MCP Probe Group" with made-up
-//! data (the merge test two such contacts, merged into one) and always delete them again, also
-//! when an assertion fails. Output only prints counts, never contact content.
+//! data (the merge test two such contacts, merged into one; the round trip also exports the probe
+//! contact and group) and always delete them again, also when an assertion fails. Output only
+//! prints counts, never contact content.
 mod support;
 use futures::FutureExt;
 use mcp_icloud_contacts::config::DEFAULT_CARDDAV_URL;
@@ -15,7 +16,7 @@ use secrecy::SecretString;
 use serde_json::{Value, json};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use support::tools::{error_text, is_error, json, params, text};
+use support::tools::{error_text, is_error, json, params, text, text_resource};
 use url::Url;
 
 const NAME: &str = "ZZ MCP Probe";
@@ -157,6 +158,37 @@ async fn round_trip(s: &ContactsServer) {
     let groups = json(&server().list_groups().await.unwrap());
     assert_eq!(group_entry(&groups, &gid).unwrap()["member_count"], 1);
     println!("group: ok");
+    let exported = server()
+        .export_vcard(params(json!({"id": id})))
+        .await
+        .unwrap();
+    let meta = json(&exported);
+    let (_, mime_type, vcf) = text_resource(&exported);
+    assert_eq!(meta["kind"], "contact");
+    assert_eq!(meta["cards"], 1);
+    assert_eq!(meta["bytes"], vcf.len());
+    assert_eq!(mime_type.as_deref(), Some("text/vcard"));
+    assert!(vcf.starts_with("BEGIN:VCARD\r\n"), "export is not a vCard");
+    assert!(vcf.ends_with("END:VCARD\r\n"), "export is not a vCard");
+    println!("contact export: {} bytes", vcf.len());
+    let exported = server()
+        .export_vcard(params(json!({"id": gid})))
+        .await
+        .unwrap();
+    let group_meta = json(&exported);
+    let (_, _, group_vcf) = text_resource(&exported);
+    assert_eq!(group_meta["kind"], "group");
+    assert_eq!(group_meta["cards"], 1);
+    assert_eq!(group_meta["missing_members"], json!([]));
+    assert!(
+        group_vcf == vcf,
+        "the group export is the probe contact's card"
+    );
+    println!(
+        "group export: {} cards, {} bytes",
+        group_meta["cards"],
+        group_vcf.len()
+    );
 
     let deleted = json(&s.delete_contact(params(json!({"id": id}))).await.unwrap());
     assert_eq!(deleted["groups_updated"], json!([gid]));
