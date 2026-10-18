@@ -4,6 +4,7 @@ pub mod dates;
 pub mod duplicates;
 pub mod error;
 pub mod index;
+pub mod prompts;
 pub mod search;
 pub mod service;
 pub mod tools;
