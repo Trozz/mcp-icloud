@@ -1648,6 +1648,7 @@ dependencies = [
  "mcp-icloud-mail",
  "mcp-server-core",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tower",

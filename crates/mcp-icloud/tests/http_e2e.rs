@@ -40,7 +40,7 @@ fn server(extra: &[(&str, &str)]) -> axum::Router {
         http: HttpSettings::from_core(&loaded.core),
         shutdown: CancellationToken::new(),
     };
-    app(loaded.core.oauth, &loaded.services, &ctx)
+    app(loaded.core.oauth, &loaded.services, &ctx, &loaded.safety)
 }
 
 fn rpc(path: &str, body: Value, token: Option<&str>, session: Option<&str>) -> Request<Body> {
@@ -447,4 +447,182 @@ async fn a_mail_token_is_rejected_on_contacts() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+/// Initializes a session on `path` with `token` and returns its id.
+async fn open_session(app: &axum::Router, path: &str, token: &str) -> String {
+    let res = app
+        .clone()
+        .oneshot(rpc(path, initialize(), Some(token), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let session = res.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    rpc_message(res).await;
+    let res = app
+        .clone()
+        .oneshot(rpc(
+            path,
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            Some(token),
+            Some(&session),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    session
+}
+
+async fn list_tools(app: &axum::Router, path: &str, session: &str) -> Vec<Value> {
+    let res = app
+        .clone()
+        .oneshot(rpc(
+            path,
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+            Some(TOKEN),
+            Some(session),
+        ))
+        .await
+        .unwrap();
+    rpc_message(res).await["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+/// Calls a tool; returns (isError, first text).
+async fn call_tool(
+    app: &axum::Router,
+    path: &str,
+    token: &str,
+    session: &str,
+    name: &str,
+    args: Value,
+) -> (bool, String) {
+    let res = app
+        .clone()
+        .oneshot(rpc(
+            path,
+            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": {"name": name, "arguments": args}}),
+            Some(token),
+            Some(session),
+        ))
+        .await
+        .unwrap();
+    let v = rpc_message(res).await;
+    (
+        v["result"]["isError"].as_bool().unwrap_or(false),
+        v["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    )
+}
+
+fn names(tools: &[Value]) -> Vec<&str> {
+    tools.iter().map(|t| t["name"].as_str().unwrap()).collect()
+}
+
+#[tokio::test]
+async fn a_read_only_service_lists_and_runs_only_read_tools() {
+    let app = server(&[("ICLOUD_READ_ONLY", "contacts")]);
+    let s = open_session(&app, "/contacts", TOKEN).await;
+    let tools = list_tools(&app, "/contacts", &s).await;
+    assert!(names(&tools).contains(&"search_contacts"), "{tools:?}");
+    assert!(!names(&tools).contains(&"delete_contact"), "{tools:?}");
+    for t in &tools {
+        assert_eq!(t["annotations"]["readOnlyHint"], true, "{t}");
+    }
+    assert_eq!(
+        call_tool(
+            &app,
+            "/contacts",
+            TOKEN,
+            &s,
+            "delete_contact",
+            json!({"id": "x"})
+        )
+        .await,
+        (
+            true,
+            "read_only: the contacts service is read-only on this server".into()
+        )
+    );
+
+    let s = open_session(&app, "/calendar", TOKEN).await;
+    let tools = list_tools(&app, "/calendar", &s).await;
+    assert!(names(&tools).contains(&"create_event"), "{tools:?}");
+}
+
+#[tokio::test]
+async fn writes_are_audited_to_the_file_without_their_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let app = server(&[
+        ("ICLOUD_READ_ONLY", "mail"),
+        ("AUDIT_LOG_PATH", path.to_str().unwrap()),
+    ]);
+    let s = open_session(&app, "/contacts", TOKEN).await;
+    let (is_error, _) = call_tool(
+        &app,
+        "/contacts",
+        TOKEN,
+        &s,
+        "delete_contact",
+        json!({"id": "SENTINEL-CONTACT-ID"}),
+    )
+    .await;
+    assert!(is_error, "CardDAV is unreachable in this test");
+    call_tool(&app, "/contacts", TOKEN, &s, "list_groups", json!({})).await;
+    let s = open_session(&app, "/mail", TOKEN).await;
+    call_tool(
+        &app,
+        "/mail",
+        TOKEN,
+        &s,
+        "create_mailbox",
+        json!({"name": "SENTINEL-MAILBOX"}),
+    )
+    .await;
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("SENTINEL"), "{text}");
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["service"], "contacts");
+    assert_eq!(lines[0]["endpoint"], "/contacts");
+    assert_eq!(lines[0]["tool"], "delete_contact");
+    assert_eq!(lines[0]["outcome"], "error");
+    assert_eq!(lines[0]["caller"], "static");
+    assert_eq!(lines[1]["service"], "mail");
+    assert_eq!(lines[1]["tool"], "create_mailbox");
+    assert_eq!(lines[1]["outcome"], "refused");
+}
+
+#[tokio::test]
+async fn the_audit_names_the_oauth_client() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let app = server(&[("AUDIT_LOG_PATH", path.to_str().unwrap())]);
+    let token = access_token_for("contacts");
+    let s = open_session(&app, "/contacts", &token).await;
+    call_tool(
+        &app,
+        "/contacts",
+        &token,
+        &s,
+        "delete_contact",
+        json!({"id": "x"}),
+    )
+    .await;
+    let text = std::fs::read_to_string(&path).unwrap();
+    let line: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(line["caller"], "oauth:e2e");
 }

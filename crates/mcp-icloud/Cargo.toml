@@ -22,3 +22,4 @@ http-body-util.workspace = true
 serde_json.workspace = true
 tracing-subscriber.workspace = true
 tokio-util.workspace = true
+tempfile.workspace = true

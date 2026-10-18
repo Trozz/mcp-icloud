@@ -168,6 +168,8 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ICLOUD_SERVICES` | no | all (`mail,calendar,contacts`) | Comma separated services to run. An unknown name or an empty list stops startup |
+| `ICLOUD_READ_ONLY` | no | none | Comma separated services, or `all`, whose write tools are hidden and refused (see [Security notes](#security-notes)). An unknown name stops startup |
+| `AUDIT_LOG_PATH` | no | | File that every write tool call is appended to as one JSON line (created with mode 0600). Audit lines are always logged too |
 | `PUBLIC_URL` | yes | | External base URL, for example `https://icloud.example.com`. `http` is accepted only for `localhost` |
 | `OAUTH_SIGNING_KEY` | yes | | At least 32 bytes. Rotating it revokes every client and token |
 | `OAUTH_ADMIN_PASSWORD` | yes | | Password for the OAuth login page, at least 12 characters |
@@ -262,6 +264,8 @@ Add `cert.pem` to the trust store of the machine running the client (or to `NODE
 - Access tokens last 1 hour, refresh tokens 30 days. There is no per-client revocation: rotate `OAUTH_SIGNING_KEY` to sign every client out.
 - Calendar and contacts requests send your credentials only to `https` hosts under `icloud.com` (or the exact `CALDAV_URL` or `CARDDAV_URL` host when overridden); redirects elsewhere are refused.
 - The container runs as UID 65532 with nothing else in the image.
+- `ICLOUD_READ_ONLY` makes services read-only on this server: their clients see only the tools marked read-only, and any other tool call returns `read_only: the <service> service is read-only on this server`. For example `ICLOUD_READ_ONLY=mail,contacts` keeps calendar writable.
+- Every call of a tool that is not read-only (including refused ones) is recorded on the `audit` log target, which stays on at `info` whatever `LOG_LEVEL` says, and appended to `AUDIT_LOG_PATH` when set: `{"ts", "service", "endpoint", "tool", "outcome": "ok|error|refused", "error_kind", "caller": "oauth:<client_id>|oauth|static", "elapsed_ms"}`. Arguments, ids and results are never recorded. A failing audit file logs a warning at most once a minute and never fails the call. In Docker, mount a volume for the file, for example `./audit:/audit` with `AUDIT_LOG_PATH=/audit/audit.jsonl`, so it survives container restarts.
 
 ## Development
 

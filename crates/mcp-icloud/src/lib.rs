@@ -1,7 +1,9 @@
 use mcp_server_core::config::CoreConfig;
 use mcp_server_core::oauth::{AuthState, OAuthSettings};
+use mcp_server_core::policy::{AuditLog, ToolPolicy};
 use mcp_server_core::server::build_app;
 use mcp_server_core::service::{Service, ServiceContext, ServiceEnv, ServiceFactory};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub const VERSION: &str = match option_env!("APP_VERSION") {
@@ -57,9 +59,62 @@ pub fn select<'a>(
     Ok(selected)
 }
 
+/// Resolves `ICLOUD_READ_ONLY` (comma list or `all`, unset or empty means none) against the
+/// registered names. Names that are registered but not selected are accepted and have no effect.
+pub fn read_only(
+    raw: Option<&str>,
+    registry: &[(&'static str, ServiceFactory)],
+) -> Result<Vec<&'static str>, String> {
+    let names = raw
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let mut out: Vec<&'static str> = Vec::new();
+    for name in names {
+        if name == "all" {
+            return Ok(registry.iter().map(|(n, _)| *n).collect());
+        }
+        let Some((known, _)) = registry.iter().find(|(n, _)| *n == name) else {
+            let known: Vec<&str> = registry.iter().map(|(n, _)| *n).collect();
+            return Err(format!(
+                "ICLOUD_READ_ONLY contains an unknown service: {name} (known: all, {})",
+                known.join(", ")
+            ));
+        };
+        if !out.contains(known) {
+            out.push(known);
+        }
+    }
+    Ok(out)
+}
+
+/// The read-only services and the audit log, applied to every service's tools.
+pub struct Safety {
+    pub read_only: Vec<&'static str>,
+    pub audit: Arc<AuditLog>,
+}
+
+impl Safety {
+    pub fn is_read_only(&self, service: &str) -> bool {
+        self.read_only.contains(&service)
+    }
+
+    /// The policy for `service` on its own endpoint `/<service>`.
+    pub fn policy(&self, service: &str) -> ToolPolicy {
+        ToolPolicy {
+            service: service.to_string(),
+            endpoint: format!("/{service}"),
+            read_only: self.is_read_only(service),
+            audit: self.audit.clone(),
+        }
+    }
+}
+
 pub struct Loaded {
     pub core: CoreConfig,
     pub services: Vec<Arc<dyn Service>>,
+    pub safety: Safety,
 }
 
 /// Reads the core configuration and builds every selected service. All errors are collected in
@@ -74,6 +129,14 @@ pub fn load(env: &mut ServiceEnv, registry: &[(&'static str, ServiceFactory)]) -
             Vec::new()
         }
     };
+    let read_only = match read_only(env.optional("ICLOUD_READ_ONLY").as_deref(), registry) {
+        Ok(r) => r,
+        Err(e) => {
+            env.errors.push(e);
+            Vec::new()
+        }
+    };
+    let audit_path = env.optional("AUDIT_LOG_PATH").map(PathBuf::from);
     let mut services = Vec::new();
     for (_, factory) in selected {
         if let Some(s) = factory(env) {
@@ -89,21 +152,29 @@ pub fn load(env: &mut ServiceEnv, registry: &[(&'static str, ServiceFactory)]) -
     Some(Loaded {
         core: core?,
         services,
+        safety: Safety {
+            read_only,
+            audit: Arc::new(AuditLog::new(audit_path)),
+        },
     })
 }
 
 /// The full HTTP application: health, favicon, OAuth routes and each service at `/<name>`, every
-/// service its own OAuth protected resource.
+/// service its own OAuth protected resource with its read-only rule and audit log.
 pub fn app(
     oauth: OAuthSettings,
     services: &[Arc<dyn Service>],
     ctx: &ServiceContext,
+    safety: &Safety,
 ) -> axum::Router {
     let names: Vec<&str> = services.iter().map(|s| s.name()).collect();
     let auth = AuthState::new(oauth, &names);
     let routers = services
         .iter()
-        .map(|s| (s.name(), s.clone().router(ctx)))
+        .map(|s| {
+            let policy = axum::Extension(safety.policy(s.name()));
+            (s.name(), s.clone().router(ctx).layer(policy))
+        })
         .collect();
     build_app(auth, routers).route(
         "/favicon.ico",
@@ -266,6 +337,74 @@ mod tests {
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
                 "{name} must be a lowercase path segment"
             );
+        }
+    }
+
+    #[test]
+    fn read_only_accepts_names_all_and_nothing() {
+        assert_eq!(read_only(None, SERVICES).unwrap(), Vec::<&str>::new());
+        assert_eq!(
+            read_only(Some(" , "), SERVICES).unwrap(),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            read_only(Some(" contacts,mail,contacts"), SERVICES).unwrap(),
+            vec!["contacts", "mail"]
+        );
+        assert_eq!(
+            read_only(Some("mail,all"), SERVICES).unwrap(),
+            vec!["mail", "calendar", "contacts"]
+        );
+    }
+
+    #[test]
+    fn unknown_read_only_names_stop_startup() {
+        let mut e = with_core(&[("ICLOUD_READ_ONLY", "contacts,reminders")]);
+        assert!(load(&mut e, SERVICES).is_none());
+        assert_eq!(
+            e.errors,
+            vec![
+                "ICLOUD_READ_ONLY contains an unknown service: reminders (known: all, mail, calendar, contacts)"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn read_only_names_need_not_be_selected() {
+        let mut e = with_core(&[
+            ("ICLOUD_SERVICES", "mail"),
+            ("ICLOUD_READ_ONLY", "contacts"),
+        ]);
+        let loaded = load(&mut e, SERVICES).expect("loads");
+        assert!(loaded.safety.is_read_only("contacts"));
+        assert!(!loaded.safety.is_read_only("mail"));
+        assert!(!loaded.safety.policy("mail").read_only);
+        assert_eq!(loaded.safety.policy("mail").endpoint, "/mail");
+    }
+
+    #[test]
+    fn the_audit_target_stays_on_at_any_level() {
+        use mcp_server_core::policy::AUDIT_TARGET;
+        use tracing::Level;
+        use tracing_subscriber::layer::SubscriberExt;
+        for level in [
+            "warn",
+            "error",
+            "off",
+            "info,audit=off",
+            "trace,audit=error",
+        ] {
+            let directives = mcp_server_core::observability::build_filter(
+                &log_filter(level, &[AUDIT_TARGET]),
+                false,
+                CRATE_TARGET,
+            );
+            let subscriber =
+                tracing_subscriber::registry().with(tracing_subscriber::EnvFilter::new(directives));
+            tracing::subscriber::with_default(subscriber, || {
+                assert!(tracing::enabled!(target: "audit", Level::INFO), "{level}");
+            });
         }
     }
 

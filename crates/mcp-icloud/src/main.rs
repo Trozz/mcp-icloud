@@ -1,5 +1,6 @@
 use mcp_icloud::{Loaded, SERVICES, VERSION, app, load, log_filter};
 use mcp_server_core::config::EnvReader;
+use mcp_server_core::policy::AUDIT_TARGET;
 use mcp_server_core::service::{HttpSettings, ServiceContext, ServiceEnv};
 use mcp_server_core::{install_crypto_provider, observability, shutdown_signal, tls};
 use std::net::SocketAddr;
@@ -58,11 +59,16 @@ async fn healthcheck() -> ExitCode {
 }
 
 async fn run(loaded: Loaded) -> anyhow::Result<()> {
-    let Loaded { core, services } = loaded;
-    let caps: Vec<&str> = services
+    let Loaded {
+        core,
+        services,
+        safety,
+    } = loaded;
+    let mut caps: Vec<&str> = services
         .iter()
         .flat_map(|s| s.log_caps().iter().copied())
         .collect();
+    caps.push(AUDIT_TARGET);
     let mut obs = core.observability.clone();
     obs.log_level = log_filter(&obs.log_level, &caps);
     let _guard = observability::init(&obs)?;
@@ -71,6 +77,7 @@ async fn run(loaded: Loaded) -> anyhow::Result<()> {
         tracing::info!(
             service = s.name(),
             url = core.service_url(s.name()),
+            read_only = safety.is_read_only(s.name()),
             tools = ?s.tool_names(),
             "service enabled"
         );
@@ -81,7 +88,7 @@ async fn run(loaded: Loaded) -> anyhow::Result<()> {
         http: HttpSettings::from_core(&core),
         shutdown: shutdown.clone(),
     };
-    let app = app(core.oauth, &services, &ctx);
+    let app = app(core.oauth, &services, &ctx, &safety);
     tracing::info!(addr = %core.bind_addr, "listening");
     tls::serve(app, core.bind_addr, core.tls, shutdown).await
 }
