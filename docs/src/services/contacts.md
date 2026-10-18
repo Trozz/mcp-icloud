@@ -12,7 +12,7 @@ Endpoint `/contacts` (or `contacts_<tool>` under [`/mcp`](combined.md)). The con
 | `list_groups` | read | Every group with its id, name and number of members | none |
 | `upcoming_dates` | read | Birthdays, anniversaries and other dates from today up to `days` ahead, soonest first, with the days from today and, when the year is known, the age or number of years | `days` (1 to 366, default 30) |
 | `find_duplicate_contacts` | read | Groups of contacts that look like the same person: a shared email, a shared phone number or the same full name, with the reasons, best contact to keep first | none |
-| `export_vcard` | read | A contact as vCard (`.vcf`) text, exactly as iCloud stores it, returned as a `text/vcard` resource with a summary | `id` |
+| `export_vcard` | read | A contact, or every member of a group, as vCard (`.vcf`) text exactly as iCloud stores it, returned as a `text/vcard` resource with a summary | `id` |
 | `create_contact` | write | Create a contact. Needs a given name, family name, display name or organization | contact fields (below) |
 | `update_contact` | write | Change only the fields you pass; `""` clears one. A list you pass replaces that whole list | `id` plus contact fields |
 | `delete_contact` | write | Delete a contact and remove it from every group. Your own card cannot be deleted | `id` |

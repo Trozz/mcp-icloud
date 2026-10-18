@@ -1,6 +1,8 @@
 mod support;
 use serde_json::json;
-use support::cards::{COMPANY_FILE, COMPANY_UID, PERSON_FILE, PERSON_UID, contact, seed};
+use support::cards::{
+    COMPANY_FILE, COMPANY_UID, GROUP_UID, PERSON_FILE, PERSON_UID, contact, group, seed,
+};
 use support::fake_carddav::{FakeCardDav, FakeState};
 use support::tools::{error_text, json, params, server, text_resource};
 
@@ -8,6 +10,11 @@ const LOWER_UID: &str = "E0E0E0E0-0000-4000-8000-000000000001";
 const LOWER_FILE: &str = "E0E0E0E0-0000-4000-8000-000000000001.vcf";
 const ODD_UID: &str = "ZZ probe/1 %";
 const ODD_FILE: &str = "E0E0E0E0-0000-4000-8000-000000000002.vcf";
+const MIXED_UID: &str = "E0E0E0E0-0000-4000-8000-0000000000A1";
+const MIXED_FILE: &str = "E0E0E0E0-0000-4000-8000-0000000000A1.vcf";
+const EMPTY_UID: &str = "E0E0E0E0-0000-4000-8000-0000000000A2";
+const EMPTY_FILE: &str = "E0E0E0E0-0000-4000-8000-0000000000A2.vcf";
+const GONE_UID: &str = "DEADBEEF-0000-4000-8000-000000000000";
 
 async fn seeded() -> FakeCardDav {
     let mut state = FakeState::icloud_like();
@@ -146,5 +153,116 @@ async fn unknown_and_unparseable_ids_are_errors() {
     assert_eq!(
         e,
         "upstream: iCloud error: the card BROKEN-1 could not be parsed; it is left unchanged"
+    );
+}
+
+#[tokio::test]
+async fn a_group_exports_its_members_cards_in_member_order() {
+    let fake = seeded().await;
+    let r = server(&fake)
+        .export_vcard(params(json!({"id": GROUP_UID})))
+        .await
+        .unwrap();
+    let expected = stored(&fake, PERSON_FILE) + &stored(&fake, COMPANY_FILE);
+    let (uri, mime_type, text) = text_resource(&r);
+    assert_eq!(text, expected);
+    assert_eq!(
+        json(&r),
+        json!({
+            "id": GROUP_UID,
+            "kind": "group",
+            "display_name": "Book Club",
+            "cards": 2,
+            "missing_members": [GONE_UID],
+            "bytes": expected.len(),
+        })
+    );
+    assert_eq!(uri, format!("icloud-contacts://export/{GROUP_UID}.vcf"));
+    assert_eq!(mime_type.as_deref(), Some("text/vcard"));
+}
+
+#[tokio::test]
+async fn a_group_skips_and_reports_members_that_are_not_readable_contacts() {
+    let mut state = FakeState::icloud_like();
+    seed(&mut state);
+    state.put(
+        "BROKEN.vcf",
+        "BEGIN:VCARD\nVERSION:3.0\nUID:BROKEN-1\nFN:Broken\n",
+    );
+    state.put(
+        MIXED_FILE,
+        &group(
+            MIXED_UID,
+            "Mixed",
+            &[
+                COMPANY_UID,
+                "BROKEN-1",
+                PERSON_UID,
+                GROUP_UID,
+                COMPANY_UID,
+                GONE_UID,
+                "BROKEN-1",
+            ],
+        ),
+    );
+    let fake = FakeCardDav::start(state).await;
+    let r = server(&fake)
+        .export_vcard(params(json!({"id": MIXED_UID})))
+        .await
+        .unwrap();
+    let expected = stored(&fake, COMPANY_FILE) + &stored(&fake, PERSON_FILE);
+    let (_, _, text) = text_resource(&r);
+    assert_eq!(text, expected, "member order, each member once");
+    let v = json(&r);
+    assert_eq!(v["cards"], 2);
+    assert_eq!(
+        v["missing_members"],
+        json!(["BROKEN-1", GROUP_UID, GONE_UID])
+    );
+    assert_eq!(v["bytes"], expected.len());
+}
+
+#[tokio::test]
+async fn a_group_without_readable_members_exports_an_empty_file() {
+    let mut state = FakeState::icloud_like();
+    state.put(EMPTY_FILE, &group(EMPTY_UID, "Empty", &[]));
+    let fake = FakeCardDav::start(state).await;
+    let r = server(&fake)
+        .export_vcard(params(json!({"id": EMPTY_UID})))
+        .await
+        .unwrap();
+    let (_, mime_type, text) = text_resource(&r);
+    assert_eq!(text, "");
+    assert_eq!(mime_type.as_deref(), Some("text/vcard"));
+    assert_eq!(
+        json(&r),
+        json!({
+            "id": EMPTY_UID,
+            "kind": "group",
+            "display_name": "Empty",
+            "cards": 0,
+            "missing_members": [],
+            "bytes": 0,
+        })
+    );
+}
+
+#[tokio::test]
+async fn an_unparseable_group_is_an_upstream_error() {
+    let mut state = FakeState::icloud_like();
+    state.put(
+        "BROKEN-GROUP.vcf",
+        "BEGIN:VCARD\nVERSION:3.0\nUID:BROKEN-G\nX-ADDRESSBOOKSERVER-KIND:group\nFN:Broken\n",
+    );
+    let fake = FakeCardDav::start(state).await;
+    let e = error_text(
+        &server(&fake)
+            .export_vcard(params(json!({"id": "BROKEN-G"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        e,
+        "upstream: iCloud error: the group BROKEN-G could not be parsed; it is left unchanged"
     );
 }
