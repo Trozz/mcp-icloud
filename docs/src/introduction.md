@@ -7,7 +7,7 @@ One server runs every service. Each service is its own MCP endpoint, and a combi
 | Endpoint | Service | What it does |
 |---|---|---|
 | `/mail` | [Mail](services/mail.md) | Search, read, organise and draft email; optionally send |
-| `/calendar` | [Calendar](services/calendar.md) | List, search, create, edit and delete events, including recurring ones; find free time; optionally manage invitations |
+| `/calendar` | [Calendar](services/calendar.md) | List, search, create, edit and delete events, including recurring ones; create, rename and delete calendars; find free time; optionally manage invitations |
 | `/contacts` | [Contacts](services/contacts.md) | Search, read, create, edit and delete contacts; groups (iOS Lists); upcoming birthdays and anniversaries; find and merge duplicates |
 | `/mcp` | [Combined](services/combined.md) | Every enabled service's tools in one connector, named `<service>_<tool>` |
 

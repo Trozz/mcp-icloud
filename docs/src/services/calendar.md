@@ -24,6 +24,14 @@ Endpoint `/calendar` (or `calendar_<tool>` under [`/mcp`](combined.md)). The cal
 
 Events are addressed by `event_id` as `list_events` returns it. One occurrence of a recurring event is additionally addressed by `occurrence_start`, exactly as `list_events` returns it. Every change is a conditional write: if the event changed in iCloud since it was read, the tool returns a `conflict` error instead of overwriting it.
 
+## Managing calendars
+
+- `create_calendar` makes a calendar that holds events (not reminders) under a new id in your calendar home. Colours are given as `#RRGGBB`; iCloud stores them with an alpha channel, so `list_calendars` shows them as `#RRGGBBFF`.
+- Calendar names are compared ignoring case: `create_calendar` and `rename_calendar` return a `conflict` error for a name another calendar already has. Changing only the case of a calendar's own name is allowed.
+- Read-only calendars, such as subscribed or read-only shared calendars, cannot be renamed or deleted (`read_only`).
+- `delete_calendar` only deletes an empty calendar: it first lists what the calendar holds and returns a `validation` error while it holds any event, reminder or other item. It also refuses to delete your only writable calendar.
+- The emptiness check and the delete are two separate requests to iCloud. An event added to the calendar between them, for example from your phone, is deleted together with the calendar.
+
 ## Recurrence and alerts
 
 - `recurrence` takes `freq` (`daily`, `weekly`, `monthly`, `yearly`), `interval`, `by_day` (`MO` to `SU`, with an ordinal such as `2TU` or `-1FR` for monthly and yearly), `by_month_day` (1 to 31 or -1), and either `until` or `count`.
