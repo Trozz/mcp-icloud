@@ -19,7 +19,7 @@ These connect from Anthropic's servers, so the server must be reachable from the
 2. Enter the connector URL, for example `https://icloud.example.com/contacts`.
 3. A login page from your server opens and names the service. Enter `OAUTH_ADMIN_PASSWORD`.
 
-The connector then signs in with OAuth on its own. Access tokens last one hour and refresh tokens 30 days; the client refreshes its access token itself. Connectors added in claude.ai are also available in Claude Desktop and the Claude mobile apps.
+The connector then signs in with OAuth on its own. Access tokens last one hour and refresh tokens 30 days; the client refreshes its access token itself. Every sign-in ends 90 days after it was made, or when `OAUTH_ADMIN_PASSWORD` changes; the connector then asks you to connect again. Connectors added in claude.ai are also available in Claude Desktop and the Claude mobile apps.
 
 ## Claude Code
 

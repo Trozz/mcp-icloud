@@ -7,17 +7,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mcp-server-core = { path = "../mcp-server-core" }
+mcp-server-core.workspace = true
 mcp-icloud-mail = { path = "../mcp-icloud-mail" }
 mcp-icloud-calendar = { path = "../mcp-icloud-calendar" }
 mcp-icloud-contacts = { path = "../mcp-icloud-contacts" }
-anyhow.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
 axum.workspace = true
 rmcp.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
 tower.workspace = true
 http-body-util.workspace = true
 serde_json.workspace = true

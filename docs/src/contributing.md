@@ -36,10 +36,10 @@ mdbook serve docs --open
 
 ## Adding a service
 
-Each service is a library crate that implements the `Service` trait from `mcp_server_core::service`:
+Each service is a library crate that implements the `Service` trait from [mcp-server-core](https://github.com/Trozz/mcp-server-core-rs) (`mcp_server_core::service`):
 
 1. Create `crates/mcp-icloud-<name>` as a library. Read its own variables (plus `ICLOUD_EMAIL` and `ICLOUD_APP_PASSWORD`) in `pub fn from_env(env: &mut ServiceEnv) -> Option<Arc<dyn Service>>`, reporting problems through `env.errors`. Never read the server variables.
-2. Build the MCP endpoint in the trait's `router()` with `mcp_server_core::service::mcp_service`, and return the same MCP server from `handler()` so the combined endpoint can offer it. Service names are lowercase path segments without `_` (the combined endpoint uses `_` to separate the service from the tool name), and `mcp` is reserved.
+2. Return the service's MCP server from `handler()`: the default `router()` serves it at `/<name>` and the combined endpoint offers it at `/mcp`. Override `router()` with `mcp_server_core::service::mcp_service` only to do work when the service is mounted, as calendar and contacts do to start discovery. Mark tools that only read with `read_only_hint = true`. Service names are lowercase path segments without `_` (the combined endpoint uses `_` to separate the service from the tool name), and `mcp` is reserved.
 3. Add the crate to `crates/mcp-icloud/Cargo.toml` and one line to `SERVICES` in `crates/mcp-icloud/src/lib.rs`.
 4. Document its tools on a new page under `docs/src/services/` and its variables in `docs/src/configuration.md`.
 
