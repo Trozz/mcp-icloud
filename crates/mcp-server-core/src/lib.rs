@@ -4,6 +4,7 @@ pub mod jwt;
 pub mod oauth;
 pub mod observability;
 pub mod pkce;
+pub mod policy;
 pub mod server;
 pub mod service;
 pub mod tls;

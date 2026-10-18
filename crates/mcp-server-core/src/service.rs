@@ -1,4 +1,5 @@
 use crate::config::{CoreConfig, EnvReader};
+use crate::policy::Guarded;
 use crate::server::BODY_LIMIT;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -94,8 +95,11 @@ where
         .enforce_origin_validation()
         .with_max_request_body_bytes(BODY_LIMIT)
         .with_cancellation_token(ctx.shutdown.clone());
-    let service =
-        StreamableHttpService::new(factory, Arc::new(LocalSessionManager::default()), config);
+    let service = StreamableHttpService::new(
+        move || factory().map(Guarded::new),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    );
     axum::Router::new().fallback_service(service)
 }
 

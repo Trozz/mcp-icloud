@@ -36,6 +36,7 @@ reqwest.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 rmcp.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tower.workspace = true
