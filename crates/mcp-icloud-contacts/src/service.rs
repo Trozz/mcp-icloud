@@ -99,6 +99,7 @@ mod tests {
                 "get_contact",
                 "get_my_contact",
                 "list_groups",
+                "merge_contacts",
                 "search_contacts",
                 "update_contact",
                 "update_group",
