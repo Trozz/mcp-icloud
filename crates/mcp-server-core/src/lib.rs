@@ -1,3 +1,4 @@
+pub mod combined;
 pub mod config;
 pub mod guards;
 pub mod jwt;
