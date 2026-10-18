@@ -4,6 +4,7 @@ use axum::http::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use mcp_icloud_calendar::CalendarService;
 use mcp_server_core::config::{CoreConfig, EnvReader};
+use mcp_server_core::credential::PasswordVerifier;
 use mcp_server_core::oauth::AuthState;
 use mcp_server_core::server::build_app;
 use mcp_server_core::service::{HttpSettings, Service, ServiceContext};
@@ -41,7 +42,8 @@ async fn app(allow_invites: bool) -> (axum::Router, FakeCalDav) {
         directory(&fake),
         settings(allow_invites),
     ));
-    let auth = AuthState::new(core.oauth, &["calendar"]);
+    let owner = Arc::new(PasswordVerifier::new("a long password".to_string().into()));
+    let auth = AuthState::new(core.oauth, &["calendar"], owner);
     (
         build_app(auth, vec![("calendar", calendar.router(&ctx))]),
         fake,

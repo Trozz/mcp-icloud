@@ -2,7 +2,7 @@
 //! server reads is in the configuration reference, every tool a service registers is on its
 //! service page, and the docs name nothing the code does not have. Names are read from the code
 //! at runtime, so new variables and tools fail this test until they are documented.
-use mcp_icloud::{SERVICES, load};
+use mcp_icloud::server;
 use mcp_server_core::service::ServiceEnv;
 use rmcp::ServerHandler;
 use rmcp::model::Tool;
@@ -67,7 +67,9 @@ fn read_by_the_server() -> Read {
         record.lock().unwrap().insert(k.to_string());
         value(k)
     }));
-    let loaded = load(&mut env, SERVICES).unwrap_or_else(|| panic!("{:?}", env.errors));
+    let loaded = server()
+        .load(&mut env)
+        .unwrap_or_else(|| panic!("{:?}", env.errors));
     let variables = seen
         .lock()
         .unwrap()
@@ -368,11 +370,14 @@ fn names_in_source() -> BTreeSet<String> {
 #[tokio::test]
 async fn no_variable_in_the_source_escapes_the_recorded_reads() {
     let read = read_by_the_server().variables;
+    // The server's own variables (PUBLIC_URL, OAUTH_*, ICLOUD_SERVICES, ...) are read by
+    // mcp-server-core, outside this repository, every time it loads; these are the services'.
     let source = names_in_source();
     assert!(
-        source.contains("PUBLIC_URL") && source.contains("CARDDAV_URL"),
+        source.contains("ICLOUD_EMAIL") && source.contains("CARDDAV_URL"),
         "{source:?}"
     );
+    assert!(read.contains("PUBLIC_URL") && read.contains("ICLOUD_READ_ONLY"));
     let unseen: Vec<&String> = source.difference(&read).collect();
     assert!(
         unseen.is_empty(),

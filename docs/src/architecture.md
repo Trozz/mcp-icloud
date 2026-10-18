@@ -41,14 +41,15 @@ flowchart LR
 
 | Crate | Role |
 |---|---|
-| `mcp-server-core` | Configuration reading, the OAuth authorization server, bearer guards, TLS, logging, metrics, the read-only and audit wrapper, and the `Service` trait every service implements |
 | `mcp-icloud-dav` | The shared WebDAV client (scoped credentials, redirects, retries), multistatus parsing, home discovery, and the lossless content-line layer used for iCalendar and vCard |
 | `mcp-icloud-mail` | The mail service: IMAP client and pool, message parsing, draft building, SMTP sending |
 | `mcp-icloud-calendar` | The calendar service: discovery, recurrence expansion, event editing, invitations, time zones |
 | `mcp-icloud-contacts` | The contacts service: address book discovery, the synced in-memory index, vCard reading and lossless patching, search, dates and duplicates |
-| `mcp-icloud` | The binary: selects services, mounts each at `/<name>` and the combined `/mcp`, and runs the server |
+| `mcp-icloud` | The binary: lists the services and builds the server from them |
 
-The services do not depend on each other. Anything that combines them lives in the server core or the binary.
+The server itself comes from [mcp-server-core](https://github.com/Trozz/mcp-server-core-rs), an open-source crate shared with other MCP servers: configuration reading, the OAuth authorization server, bearer guards, sign-in limits, TLS, logging, metrics, the read-only and audit wrapper, service selection and the combined endpoint, and the `Service` trait every service implements. The workspace `Cargo.toml` pins its version.
+
+The services do not depend on each other. Anything that combines them lives in mcp-server-core or the binary.
 
 ## A contact edit, end to end
 

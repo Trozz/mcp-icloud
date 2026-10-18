@@ -31,12 +31,12 @@ sequenceDiagram
 
 ## The static token
 
-`MCP_AUTH_TOKEN` is a single-owner shortcut for clients that can send a header. It is accepted on every endpoint, so treat it like the admin password. Leave it unset if you only use claude.ai.
+`MCP_AUTH_TOKEN` is a single-owner shortcut for clients that can send a header. It is accepted on every endpoint, so treat it like the admin password: use a long random value (the server warns at startup about one shorter than 32 characters). Wrong tokens count towards the login rate limits below, so it cannot be guessed. Leave it unset if you only use claude.ai.
 
 ## Login rate limits
 
-- At most 5 failed logins per minute per client address, and 30 failures per minute in total.
-- Trade-off: someone who keeps failing can lock you out of the login page for up to a minute; tokens already issued keep working.
+- At most 5 failed logins or wrong bearer tokens per minute per client address, and 30 failures per minute in total. Once the total is reached, every login and the static token wait for the rest of the minute, so spreading guesses over many addresses gains nothing.
+- Trade-off: someone who keeps failing can lock you out of the login page and the static token for up to a minute; OAuth tokens already issued keep working. An expired OAuth token is never counted as a failure.
 - The client address is the TCP peer. Behind a reverse proxy, set `TRUSTED_PROXIES` to the proxy addresses so the right-most untrusted `X-Forwarded-For` entry is used; otherwise every request shares the proxy address and the per-client limit is effectively global.
 
 ## Read-only services

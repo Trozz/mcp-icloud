@@ -5,6 +5,7 @@ use http_body_util::BodyExt;
 use mcp_icloud_mail::MailService;
 use mcp_icloud_mail::smtp::{RecordingSender, Sender};
 use mcp_server_core::config::{CoreConfig, EnvReader};
+use mcp_server_core::credential::PasswordVerifier;
 use mcp_server_core::oauth::AuthState;
 use mcp_server_core::server::build_app;
 use mcp_server_core::service::{HttpSettings, Service, ServiceContext};
@@ -46,7 +47,8 @@ async fn app(allow_send: bool) -> (axum::Router, FakeImap) {
     let sender: Option<Arc<dyn Sender>> =
         allow_send.then(|| Arc::new(RecordingSender::default()) as Arc<dyn Sender>);
     let mail = Arc::new(MailService::new(imap(&fake), sender, settings(1024 * 1024)));
-    let auth = AuthState::new(core.oauth, &["mail"]);
+    let owner = Arc::new(PasswordVerifier::new("a long password".to_string().into()));
+    let auth = AuthState::new(core.oauth, &["mail"], owner);
     (build_app(auth, vec![("mail", mail.router(&ctx))]), fake)
 }
 
