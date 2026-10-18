@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(svc.name(), "calendar");
         assert!(svc.log_caps().is_empty());
         let tools = svc.tool_names();
-        assert_eq!(tools.len(), 10, "{tools:?}");
+        assert_eq!(tools.len(), 11, "{tools:?}");
         assert!(tools.contains(&"list_events".to_string()), "{tools:?}");
     }
 
@@ -117,7 +117,7 @@ mod tests {
             ("ICLOUD_ALLOW_INVITES", "true"),
         ]);
         let tools = from_env(&mut e).expect("service").tool_names();
-        assert_eq!(tools.len(), 11, "{tools:?}");
+        assert_eq!(tools.len(), 12, "{tools:?}");
         assert!(tools.contains(&"respond_to_invitation".to_string()));
     }
 

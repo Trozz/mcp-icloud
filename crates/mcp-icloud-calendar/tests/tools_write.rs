@@ -65,6 +65,7 @@ async fn write_tools_are_registered_without_invitation_replies() {
             "get_timezone",
             "list_calendars",
             "list_events",
+            "rename_calendar",
             "set_timezone",
             "update_event"
         ]

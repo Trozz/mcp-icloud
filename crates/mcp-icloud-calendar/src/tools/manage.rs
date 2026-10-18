@@ -1,9 +1,9 @@
 //! create_calendar, rename_calendar and delete_calendar.
 
-use super::write::new_uid;
+use super::write::{new_uid, writable};
 use super::{CalendarServer, calendar_json, json_result, run};
 use crate::caldav::discovery::Account;
-use crate::caldav::xml::mkcalendar;
+use crate::caldav::xml::{mkcalendar, propertyupdate};
 use crate::error::{self, CalError};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -18,6 +18,17 @@ pub struct CreateCalendarParams {
     /// Name of the new calendar. Must differ from every calendar's name, ignoring case.
     pub name: String,
     /// Colour as #RRGGBB, for example #1BADF8.
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct RenameCalendarParams {
+    /// Calendar name or id from list_calendars.
+    pub calendar: String,
+    /// New name. Must not be another calendar's name, ignoring case.
+    pub new_name: Option<String>,
+    /// New colour as #RRGGBB, for example #1BADF8.
     pub color: Option<String>,
 }
 
@@ -80,6 +91,60 @@ impl CalendarServer {
             );
         Ok(json_result(&json!({"created": true, "calendar": calendar})))
     }
+
+    async fn patch_calendar(&self, p: RenameCalendarParams) -> error::Result<CallToolResult> {
+        let new_name = p
+            .new_name
+            .as_deref()
+            .map(|n| name_in(n, "new_name"))
+            .transpose()?;
+        let color = p.color.as_deref().map(color_in).transpose()?;
+        if new_name.is_none() && color.is_none() {
+            return Err(CalError::invalid(
+                "nothing to change: give new_name, color or both",
+            ));
+        }
+        let account = self.dir.refresh().await?;
+        let cal = account.calendar(&p.calendar)?;
+        writable(cal)?;
+        if let Some(n) = &new_name {
+            name_free(&account, n, Some(&cal.id))?;
+        }
+        self.dir
+            .client()
+            .proppatch(
+                &cal.url,
+                propertyupdate(new_name.as_deref(), color.as_deref()),
+            )
+            .await?;
+        let id = cal.id.clone();
+        let account = self.dir.refresh().await?;
+        let updated = account
+            .calendars
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or_else(|| {
+                CalError::Upstream(format!(
+                    "calendar {id} is no longer listed after the change"
+                ))
+            })?;
+        let name_applied = new_name.as_ref().is_none_or(|n| &updated.name == n);
+        let color_applied = color.as_ref().is_none_or(|want| {
+            updated
+                .color
+                .as_deref()
+                .and_then(|got| got.get(..7))
+                .is_some_and(|got| got.eq_ignore_ascii_case(&want[..7]))
+        });
+        if !(name_applied && color_applied) {
+            return Err(CalError::Upstream(
+                "iCloud accepted the change but did not apply it".into(),
+            ));
+        }
+        Ok(json_result(
+            &json!({"updated": true, "calendar": calendar_json(updated)}),
+        ))
+    }
 }
 
 #[tool_router(router = manage_router, vis = "pub(crate)")]
@@ -99,6 +164,23 @@ impl CalendarServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!("create_calendar");
         run("create_calendar", self.make_calendar(p)).await
+    }
+
+    #[tool(
+        description = "Rename a calendar, change its colour (#RRGGBB), or both. Give new_name, color or both. The new name must not be another calendar's name, ignoring case. Read-only calendars are refused.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn rename_calendar(
+        &self,
+        Parameters(p): Parameters<RenameCalendarParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!("rename_calendar");
+        run("rename_calendar", self.patch_calendar(p)).await
     }
 }
 

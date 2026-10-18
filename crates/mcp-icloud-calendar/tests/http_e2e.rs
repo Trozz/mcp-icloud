@@ -159,7 +159,7 @@ async fn tools_list_and_call_over_http() {
     let session = handshake(&app).await;
     let list = call(&app, &session, 2, "tools/list", json!({})).await;
     let names = tool_names(&list);
-    assert_eq!(names.len(), 10, "{names:?}");
+    assert_eq!(names.len(), 11, "{names:?}");
     assert!(!names.contains(&"respond_to_invitation".to_string()));
     let tools = list["result"]["tools"].as_array().unwrap();
     let annotation = |name: &str, key: &str| {

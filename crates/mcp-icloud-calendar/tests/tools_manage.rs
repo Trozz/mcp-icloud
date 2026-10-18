@@ -107,3 +107,110 @@ async fn create_validates_before_any_write() {
     }
     assert_eq!(writes(&fake), 0);
 }
+
+#[tokio::test]
+async fn rename_changes_the_name_and_colour() {
+    let fake = fake().await;
+    let s = server(&fake, false);
+    let v = json(
+        &s.rename_calendar(params(json!({
+            "calendar": "Work", "new_name": "Office", "color": "#00ff00"
+        })))
+        .await
+        .unwrap(),
+    );
+    assert_eq!(v["updated"], true);
+    assert_eq!(
+        v["calendar"],
+        json!({"id": "/1234567890/calendars/work/", "name": "Office", "color": "#00FF00FF", "writable": true})
+    );
+    let st = fake.state();
+    let patch = st.log.iter().find(|l| l.method == "PROPPATCH").unwrap();
+    assert_eq!(patch.path, "/1234567890/calendars/work/");
+    assert!(
+        patch.body.contains("<d:displayname>Office</d:displayname>"),
+        "{}",
+        patch.body
+    );
+    assert_eq!(st.resource_names("work"), ["standup-1.ics"]);
+}
+
+#[tokio::test]
+async fn rename_can_change_only_the_colour_or_only_the_case() {
+    let fake = fake().await;
+    let s = server(&fake, false);
+    let v = json(
+        &s.rename_calendar(params(json!({
+            "calendar": "/1234567890/calendars/home/", "color": "#FF2968"
+        })))
+        .await
+        .unwrap(),
+    );
+    assert_eq!(v["calendar"]["name"], "Home");
+    assert_eq!(v["calendar"]["color"], "#FF2968FF");
+    let body = fake
+        .state()
+        .log
+        .iter()
+        .find(|l| l.method == "PROPPATCH")
+        .unwrap()
+        .body
+        .clone();
+    assert!(!body.contains("displayname"), "{body}");
+    let v = json(
+        &s.rename_calendar(params(json!({"calendar": "work", "new_name": "WORK"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(v["calendar"]["name"], "WORK");
+}
+
+#[tokio::test]
+async fn rename_validates_and_refuses_before_any_write() {
+    let fake = fake().await;
+    let s = server(&fake, false);
+    let cases = [
+        (json!({"calendar": "Work"}), "validation:"),
+        (json!({"calendar": "Work", "new_name": "  "}), "validation:"),
+        (
+            json!({"calendar": "Work", "new_name": "a\tb"}),
+            "validation:",
+        ),
+        (json!({"calendar": "Work", "color": "blue"}), "validation:"),
+        (json!({"calendar": "Work", "new_name": "home"}), "conflict:"),
+        (
+            json!({"calendar": "Holidays", "new_name": "Days off"}),
+            "read_only:",
+        ),
+        (
+            json!({"calendar": "Garden", "new_name": "Yard"}),
+            "not_found:",
+        ),
+        (
+            json!({"calendar": "/1234567890/calendars/../principal/", "new_name": "x"}),
+            "validation:",
+        ),
+    ];
+    for (args, kind) in cases {
+        let e = error_text(&s.rename_calendar(params(args.clone())).await.unwrap());
+        assert!(e.starts_with(kind), "{args}: {e}");
+    }
+    assert_eq!(writes(&fake), 0);
+}
+
+#[tokio::test]
+async fn a_change_icloud_did_not_apply_is_an_upstream_error() {
+    let mut st = FakeState::icloud_like();
+    st.ignore_proppatch = true;
+    let fake = FakeCalDav::start(st).await;
+    let e = error_text(
+        &server(&fake, false)
+            .rename_calendar(params(json!({"calendar": "Work", "new_name": "Office"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        e,
+        "upstream: iCloud error: iCloud accepted the change but did not apply it"
+    );
+}

@@ -16,6 +16,7 @@ Endpoint `/calendar` (or `calendar_<tool>` under [`/mcp`](combined.md)). The cal
 | `update_event` | write | Change only the fields you pass, for the whole series, one occurrence, or this and following occurrences | `event_id`, `scope` (`series`, `occurrence`, `this_and_following`), `occurrence_start`, and any field of `create_event` |
 | `delete_event` | write | Delete the series, one occurrence, or this and following occurrences | `event_id`, `scope`, `occurrence_start` |
 | `create_calendar` | write | Create a calendar for events. The name must differ from every calendar's name, ignoring case. Returns the calendar as `list_calendars` shows it | `name`, `color` (`#RRGGBB`) |
+| `rename_calendar` | write | Rename a calendar, change its colour, or both. The new name must not be another calendar's name, ignoring case. Read-only calendars are refused | `calendar`, `new_name`, `color` (`#RRGGBB`; give at least one of the two) |
 | `respond_to_invitation` | write | Accept, decline or tentatively accept an invitation; iCloud sends the reply to the organizer. Registered only with `ICLOUD_ALLOW_INVITES=true` | `event_id`, `response` (`accepted`, `declined`, `tentative`), `occurrence_start` |
 
 ## Addressing events
