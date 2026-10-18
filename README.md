@@ -24,7 +24,7 @@ iCloud has no public API for these services. The server talks to Apple over stan
 | Calendars | CalDAV | `caldav.icloud.com` (then your account's partition host, for example `p99-caldav.icloud.com`) |
 | Contacts | CardDAV | `contacts.icloud.com` (then your account's partition host, for example `p99-contacts.icloud.com`) |
 
-MCP clients reach each service over HTTPS at its path (`https://<host>/mail`, `https://<host>/calendar`, `https://<host>/contacts`). They authenticate with an OAuth access token (claude.ai) or a static bearer token (Claude Code and other clients that can send a header). Your Apple password never leaves the server.
+MCP clients reach each service over HTTPS at its path (`https://<host>/mail`, `https://<host>/calendar`, `https://<host>/contacts`). The combined endpoint `https://<host>/mcp` serves all of them in one MCP server. They authenticate with an OAuth access token (claude.ai) or a static bearer token (Claude Code and other clients that can send a header). Your Apple password never leaves the server.
 
 `ICLOUD_SERVICES` chooses which services run (default: all). A service that is not enabled is not mounted and does not read its configuration.
 
@@ -136,7 +136,7 @@ ICLOUD_EMAIL=... ICLOUD_APP_PASSWORD=... PUBLIC_URL=... OAUTH_SIGNING_KEY=... OA
 
 ## Connecting clients
 
-Each service is a separate MCP server, so add one connector per service you want.
+Each service is a separate MCP server, so add one connector per service you want, or a single connector for all of them at `/mcp` (see [Combined endpoint](#combined-endpoint-mcp)).
 
 ### claude.ai, Claude Desktop and Claude mobile (remote connector)
 
@@ -157,7 +157,19 @@ claude mcp add --transport http icloud-calendar https://icloud.example.com/calen
   --header "Authorization: Bearer $MCP_AUTH_TOKEN"
 claude mcp add --transport http icloud-contacts https://icloud.example.com/contacts \
   --header "Authorization: Bearer $MCP_AUTH_TOKEN"
+# or every service in one server
+claude mcp add --transport http icloud https://icloud.example.com/mcp \
+  --header "Authorization: Bearer $MCP_AUTH_TOKEN"
 ```
+
+## Combined endpoint (`/mcp`)
+
+`https://<host>/mcp` serves the tools of every enabled service in one MCP server, next to the per-service endpoints. Each tool name starts with its service, for example `mail_search_messages`, `calendar_list_events` and `contacts_search_contacts`; descriptions, arguments and results are the same as on the service's own endpoint.
+
+- `ICLOUD_READ_ONLY` applies here too, and audit lines name the real service and tool with `"endpoint": "/mcp"`.
+- `/mcp` is its own OAuth protected resource with scope `mcp`: a token issued for `/mcp` works only there. The static `MCP_AUTH_TOKEN` works on every path.
+- Because `/mcp` is a protected resource of its own, an OAuth client must name the resource it wants (the `resource` parameter, which claude.ai sends) even when only one service runs.
+- `ICLOUD_COMBINED=false` turns it off.
 
 ## Configuration
 
@@ -170,6 +182,7 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 | `ICLOUD_SERVICES` | no | all (`mail,calendar,contacts`) | Comma separated services to run. An unknown name or an empty list stops startup |
 | `ICLOUD_READ_ONLY` | no | none | Comma separated services, or `all`, whose write tools are hidden and refused (see [Security notes](#security-notes)). An unknown name stops startup |
 | `AUDIT_LOG_PATH` | no | | File that every write tool call is appended to as one JSON line (created with mode 0600). Audit lines are always logged too |
+| `ICLOUD_COMBINED` | no | `true` | Also serve every enabled service's tools at `/mcp`, prefixed with the service name (see [Combined endpoint](#combined-endpoint-mcp)) |
 | `PUBLIC_URL` | yes | | External base URL, for example `https://icloud.example.com`. `http` is accepted only for `localhost` |
 | `OAUTH_SIGNING_KEY` | yes | | At least 32 bytes. Rotating it revokes every client and token |
 | `OAUTH_ADMIN_PASSWORD` | yes | | Password for the OAuth login page, at least 12 characters |
@@ -297,14 +310,15 @@ pub trait Service: Send + Sync + 'static {
     fn tool_names(&self) -> Vec<String>;
     fn log_caps(&self) -> &'static [&'static str] { &[] }
     fn router(self: Arc<Self>, ctx: &ServiceContext) -> axum::Router;
+    fn handler(&self) -> DynHandler;           // the same MCP server, for the combined /mcp endpoint
 }
 ```
 
 1. Create `crates/mcp-icloud-<name>` as a library. Read its own variables (plus `ICLOUD_EMAIL`/`ICLOUD_APP_PASSWORD`) in `pub fn from_env(env: &mut ServiceEnv) -> Option<Arc<dyn Service>>`, reporting problems through `env.errors`. Never read the server variables.
-2. Build the MCP endpoint in `router()` with `mcp_server_core::service::mcp_service(ctx, move || Ok(MyServer::new(...)))`.
+2. Build the MCP endpoint in `router()` with `mcp_server_core::service::mcp_service(ctx, move || Ok(MyServer::new(...)))`, and return the same server from `handler()` as `DynHandler::new(MyServer::new(...))`. Service names are lowercase path segments without `_`, which the combined endpoint uses as the tool name separator; `mcp` is reserved.
 3. Add the crate to `crates/mcp-icloud/Cargo.toml` and one line to `SERVICES` in `crates/mcp-icloud/src/lib.rs`.
 
-Routing, OAuth metadata, token audiences, `ICLOUD_SERVICES` and the release pipeline pick the new service up without further changes.
+Routing, OAuth metadata, token audiences, `ICLOUD_SERVICES`, the combined endpoint and the release pipeline pick the new service up without further changes.
 
 ## Releases
 

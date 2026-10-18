@@ -1,3 +1,4 @@
+use crate::combined::DynHandler;
 use crate::config::{CoreConfig, EnvReader};
 use crate::policy::Guarded;
 use crate::server::BODY_LIMIT;
@@ -54,6 +55,9 @@ pub trait Service: Send + Sync + 'static {
     }
     /// The rmcp Streamable HTTP service for this service, mounted by core at `/<name>`.
     fn router(self: Arc<Self>, ctx: &ServiceContext) -> axum::Router;
+    /// This service's MCP handler, for serving it with the others on the combined `/mcp`
+    /// endpoint. Called once per session, like the router's factory.
+    fn handler(&self) -> DynHandler;
 }
 
 /// `scheme://host:port` for `public_url`, with the scheme's default port made explicit so rmcp

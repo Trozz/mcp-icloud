@@ -1647,6 +1647,7 @@ dependencies = [
  "mcp-icloud-contacts",
  "mcp-icloud-mail",
  "mcp-server-core",
+ "rmcp",
  "serde_json",
  "tempfile",
  "tokio",

@@ -14,6 +14,7 @@ mcp-icloud-contacts = { path = "../mcp-icloud-contacts" }
 anyhow.workspace = true
 tokio.workspace = true
 axum.workspace = true
+rmcp.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

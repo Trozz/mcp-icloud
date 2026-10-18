@@ -4,6 +4,7 @@ use crate::config::CalendarConfig;
 use crate::tools::{CalendarServer, ToolSettings};
 use crate::tz::ZoneState;
 use mcp_icloud_dav::client::DavClient;
+use mcp_server_core::combined::DynHandler;
 use mcp_server_core::service::{Service, ServiceContext, ServiceEnv, mcp_service};
 use std::sync::Arc;
 
@@ -49,6 +50,10 @@ impl Service for CalendarService {
             });
         }
         mcp_service(ctx, move || Ok(self.server()))
+    }
+
+    fn handler(&self) -> DynHandler {
+        DynHandler::new(self.server())
     }
 }
 

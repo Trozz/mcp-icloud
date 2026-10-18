@@ -1,4 +1,4 @@
-use mcp_icloud::{Loaded, SERVICES, VERSION, app, load, log_filter};
+use mcp_icloud::{COMBINED, Loaded, SERVICES, VERSION, app, load, log_filter};
 use mcp_server_core::config::EnvReader;
 use mcp_server_core::policy::AUDIT_TARGET;
 use mcp_server_core::service::{HttpSettings, ServiceContext, ServiceEnv};
@@ -63,6 +63,7 @@ async fn run(loaded: Loaded) -> anyhow::Result<()> {
         core,
         services,
         safety,
+        combined,
     } = loaded;
     let mut caps: Vec<&str> = services
         .iter()
@@ -82,13 +83,21 @@ async fn run(loaded: Loaded) -> anyhow::Result<()> {
             "service enabled"
         );
     }
+    if combined && !services.is_empty() {
+        let tools: usize = services.iter().map(|s| s.tool_names().len()).sum();
+        tracing::info!(
+            url = core.service_url(COMBINED),
+            tools,
+            "combined endpoint enabled"
+        );
+    }
 
     let shutdown = shutdown_signal();
     let ctx = ServiceContext {
         http: HttpSettings::from_core(&core),
         shutdown: shutdown.clone(),
     };
-    let app = app(core.oauth, &services, &ctx, &safety);
+    let app = app(core.oauth, &services, &ctx, &safety, combined);
     tracing::info!(addr = %core.bind_addr, "listening");
     tls::serve(app, core.bind_addr, core.tls, shutdown).await
 }

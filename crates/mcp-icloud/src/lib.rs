@@ -1,8 +1,12 @@
+use mcp_server_core::combined::{Combined, DynHandler};
 use mcp_server_core::config::CoreConfig;
 use mcp_server_core::oauth::{AuthState, OAuthSettings};
-use mcp_server_core::policy::{AuditLog, ToolPolicy};
+use mcp_server_core::policy::{AuditLog, Guarded, ToolPolicy};
 use mcp_server_core::server::build_app;
-use mcp_server_core::service::{Service, ServiceContext, ServiceEnv, ServiceFactory};
+use mcp_server_core::service::{
+    Service, ServiceContext, ServiceEnv, ServiceFactory, icons, mcp_service,
+};
+use rmcp::model::Implementation;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,6 +18,8 @@ pub const VERSION: &str = match option_env!("APP_VERSION") {
 pub const SERVICE_NAME: &str = "mcp-icloud";
 /// Tracing target prefix: also matches `mcp_icloud_mail` and every other `mcp_icloud_*` crate.
 pub const CRATE_TARGET: &str = "mcp_icloud";
+/// Path, OAuth resource suffix and scope of the combined endpoint; never a service name.
+pub const COMBINED: &str = "mcp";
 
 /// Every service this binary can run, in mount order. Adding a service: a library crate
 /// implementing `mcp_server_core::service::Service`, a dependency in Cargo.toml and one line here.
@@ -115,6 +121,8 @@ pub struct Loaded {
     pub core: CoreConfig,
     pub services: Vec<Arc<dyn Service>>,
     pub safety: Safety,
+    /// Serve every service's tools together at `/mcp` (`ICLOUD_COMBINED`, default true).
+    pub combined: bool,
 }
 
 /// Reads the core configuration and builds every selected service. All errors are collected in
@@ -137,6 +145,7 @@ pub fn load(env: &mut ServiceEnv, registry: &[(&'static str, ServiceFactory)]) -
         }
     };
     let audit_path = env.optional("AUDIT_LOG_PATH").map(PathBuf::from);
+    let combined = env.bool("ICLOUD_COMBINED", true);
     let mut services = Vec::new();
     for (_, factory) in selected {
         if let Some(s) = factory(env) {
@@ -156,26 +165,77 @@ pub fn load(env: &mut ServiceEnv, registry: &[(&'static str, ServiceFactory)]) -
             read_only,
             audit: Arc::new(AuditLog::new(audit_path)),
         },
+        combined,
+    })
+}
+
+/// `serverInfo` of the combined endpoint: this binary's name, version and icon.
+fn combined_info() -> Implementation {
+    Implementation::new(SERVICE_NAME, VERSION).with_icons(icons(
+        include_bytes!("../assets/favicon.png"),
+        include_str!("../assets/favicon.svg"),
+    ))
+}
+
+/// The combined endpoint: every service's tools as `<service>_<tool>`, each service under its own
+/// read-only rule and audit log, recorded with endpoint `/mcp`.
+fn combined_router(
+    services: &[Arc<dyn Service>],
+    ctx: &ServiceContext,
+    safety: &Safety,
+) -> axum::Router {
+    let parts: Vec<(Arc<dyn Service>, ToolPolicy)> = services
+        .iter()
+        .map(|s| {
+            let policy = ToolPolicy {
+                endpoint: format!("/{COMBINED}"),
+                ..safety.policy(s.name())
+            };
+            (s.clone(), policy)
+        })
+        .collect();
+    mcp_service(ctx, move || {
+        let handlers = parts
+            .iter()
+            .map(|(s, policy)| {
+                let guarded = Guarded::with_policy(s.handler(), policy.clone());
+                (s.name(), DynHandler::new(guarded))
+            })
+            .collect();
+        Ok(Combined::new(combined_info(), handlers))
     })
 }
 
 /// The full HTTP application: health, favicon, OAuth routes and each service at `/<name>`, every
-/// service its own OAuth protected resource with its read-only rule and audit log.
+/// service its own OAuth protected resource with its read-only rule and audit log; with
+/// `combined`, also every service's tools together at `/mcp`, its own protected resource.
 pub fn app(
     oauth: OAuthSettings,
     services: &[Arc<dyn Service>],
     ctx: &ServiceContext,
     safety: &Safety,
+    combined: bool,
 ) -> axum::Router {
-    let names: Vec<&str> = services.iter().map(|s| s.name()).collect();
+    assert!(
+        services.iter().all(|s| s.name() != COMBINED),
+        "{COMBINED} is reserved for the combined endpoint"
+    );
+    let combined = combined && !services.is_empty();
+    let mut names: Vec<&str> = services.iter().map(|s| s.name()).collect();
+    if combined {
+        names.push(COMBINED);
+    }
     let auth = AuthState::new(oauth, &names);
-    let routers = services
+    let mut routers: Vec<(&'static str, axum::Router)> = services
         .iter()
         .map(|s| {
             let policy = axum::Extension(safety.policy(s.name()));
             (s.name(), s.clone().router(ctx).layer(policy))
         })
         .collect();
+    if combined {
+        routers.push((COMBINED, combined_router(services, ctx, safety)));
+    }
     build_app(auth, routers).route(
         "/favicon.ico",
         axum::routing::get(|| async {
@@ -338,6 +398,28 @@ mod tests {
                 "{name} must be a lowercase path segment"
             );
         }
+    }
+
+    #[test]
+    fn no_service_takes_the_combined_endpoints_name() {
+        assert!(SERVICES.iter().all(|(name, _)| *name != COMBINED));
+        let e = select(Some(COMBINED), SERVICES).unwrap_err();
+        assert!(
+            e.starts_with("ICLOUD_SERVICES contains an unknown service: mcp"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn the_combined_endpoint_is_on_unless_turned_off() {
+        let mut e = with_core(&[]);
+        assert!(load(&mut e, SERVICES).expect("loads").combined);
+        let mut e = with_core(&[("ICLOUD_COMBINED", "false")]);
+        assert!(!load(&mut e, SERVICES).expect("loads").combined);
+        let mut e = with_core(&[("ICLOUD_COMBINED", "maybe")]);
+        assert!(load(&mut e, SERVICES).is_none());
+        assert_eq!(e.errors.len(), 1, "{:?}", e.errors);
+        assert!(e.errors[0].contains("ICLOUD_COMBINED"), "{:?}", e.errors);
     }
 
     #[test]

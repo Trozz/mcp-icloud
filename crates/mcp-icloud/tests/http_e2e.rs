@@ -40,7 +40,13 @@ fn server(extra: &[(&str, &str)]) -> axum::Router {
         http: HttpSettings::from_core(&loaded.core),
         shutdown: CancellationToken::new(),
     };
-    app(loaded.core.oauth, &loaded.services, &ctx, &loaded.safety)
+    app(
+        loaded.core.oauth,
+        &loaded.services,
+        &ctx,
+        &loaded.safety,
+        loaded.combined,
+    )
 }
 
 fn rpc(path: &str, body: Value, token: Option<&str>, session: Option<&str>) -> Request<Body> {
@@ -198,8 +204,8 @@ async fn mail_sub_paths_are_guarded_too() {
 }
 
 #[tokio::test]
-async fn old_mcp_path_is_not_served() {
-    let res = server(&[])
+async fn the_combined_endpoint_can_be_turned_off() {
+    let res = server(&[("ICLOUD_COMBINED", "false")])
         .oneshot(rpc("/mcp", initialize(), Some(TOKEN), None))
         .await
         .unwrap();
@@ -625,4 +631,197 @@ async fn the_audit_names_the_oauth_client() {
     let text = std::fs::read_to_string(&path).unwrap();
     let line: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
     assert_eq!(line["caller"], "oauth:e2e");
+}
+
+/// Each tool of every service on its own endpoint, renamed `<service>_<tool>`, by name.
+async fn prefixed_service_tools(app: &axum::Router) -> std::collections::BTreeMap<String, Value> {
+    let mut all = std::collections::BTreeMap::new();
+    for service in ["mail", "calendar", "contacts"] {
+        let path = format!("/{service}");
+        let s = open_session(app, &path, TOKEN).await;
+        for mut tool in list_tools(app, &path, &s).await {
+            let name = format!("{service}_{}", tool["name"].as_str().unwrap());
+            tool["name"] = json!(name);
+            all.insert(name, tool);
+        }
+    }
+    all
+}
+
+#[tokio::test]
+async fn the_combined_endpoint_lists_every_service_tool_with_its_prefix() {
+    let app = server(&[]);
+    let res = app
+        .clone()
+        .oneshot(rpc("/mcp", initialize(), Some(TOKEN), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let init = rpc_message(res).await;
+    let info = &init["result"]["serverInfo"];
+    assert_eq!(info["name"], "mcp-icloud");
+    assert_eq!(info["version"], mcp_icloud::VERSION);
+    assert_eq!(info["icons"].as_array().map(Vec::len), Some(2), "{info}");
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.contains("mail_, calendar_, contacts_"),
+        "{instructions}"
+    );
+    for heading in ["\n\nmail:\n", "\n\ncalendar:\n", "\n\ncontacts:\n"] {
+        assert!(
+            instructions.contains(heading),
+            "{heading:?} in {instructions}"
+        );
+    }
+
+    let s = open_session(&app, "/mcp", TOKEN).await;
+    let combined: std::collections::BTreeMap<String, Value> = list_tools(&app, "/mcp", &s)
+        .await
+        .into_iter()
+        .map(|t| (t["name"].as_str().unwrap().to_string(), t))
+        .collect();
+    let expected = prefixed_service_tools(&app).await;
+    assert_eq!(
+        combined.keys().collect::<Vec<_>>(),
+        expected.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        combined, expected,
+        "descriptions, schemas and annotations unchanged"
+    );
+}
+
+#[tokio::test]
+async fn a_combined_call_runs_the_services_own_tool() {
+    let app = server(&[]);
+    let s = open_session(&app, "/calendar", TOKEN).await;
+    let own = call_tool(&app, "/calendar", TOKEN, &s, "get_timezone", json!({})).await;
+    let s = open_session(&app, "/mcp", TOKEN).await;
+    let combined = call_tool(&app, "/mcp", TOKEN, &s, "calendar_get_timezone", json!({})).await;
+    assert!(!own.0, "{own:?}");
+    assert_eq!(combined, own);
+
+    for name in ["get_timezone", "reminders_list", "calendar_nope"] {
+        let res = app
+            .clone()
+            .oneshot(rpc(
+                "/mcp",
+                json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                    "params": {"name": name, "arguments": {}}}),
+                Some(TOKEN),
+                Some(&s),
+            ))
+            .await
+            .unwrap();
+        let v = rpc_message(res).await;
+        assert_eq!(v["error"]["message"], "tool not found", "{name}: {v}");
+    }
+}
+
+#[tokio::test]
+async fn read_only_and_audit_apply_on_the_combined_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let app = server(&[
+        ("ICLOUD_READ_ONLY", "contacts"),
+        ("AUDIT_LOG_PATH", path.to_str().unwrap()),
+    ]);
+    let s = open_session(&app, "/mcp", TOKEN).await;
+    let tools = list_tools(&app, "/mcp", &s).await;
+    let listed = names(&tools);
+    assert!(listed.contains(&"contacts_search_contacts"), "{listed:?}");
+    assert!(!listed.contains(&"contacts_delete_contact"), "{listed:?}");
+    assert!(listed.contains(&"calendar_create_event"), "{listed:?}");
+    assert_eq!(
+        call_tool(
+            &app,
+            "/mcp",
+            TOKEN,
+            &s,
+            "contacts_delete_contact",
+            json!({"id": "SENTINEL-CONTACT-ID"})
+        )
+        .await,
+        (
+            true,
+            "read_only: the contacts service is read-only on this server".into()
+        )
+    );
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("SENTINEL"), "{text}");
+    let line: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(line["service"], "contacts");
+    assert_eq!(line["endpoint"], "/mcp");
+    assert_eq!(line["tool"], "delete_contact");
+    assert_eq!(line["outcome"], "refused");
+    assert_eq!(line["caller"], "static");
+}
+
+#[tokio::test]
+async fn the_combined_endpoint_is_its_own_protected_resource() {
+    let app = server(&[]);
+    let res = app
+        .clone()
+        .oneshot(rpc("/mcp", initialize(), None, None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        res.headers()["www-authenticate"].to_str().unwrap(),
+        "Bearer resource_metadata=\"https://icloud.example.com/.well-known/oauth-protected-resource/mcp\""
+    );
+    let res = app
+        .clone()
+        .oneshot(
+            Request::get("/.well-known/oauth-protected-resource/mcp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["resource"], "https://icloud.example.com/mcp");
+    assert_eq!(v["scopes_supported"], json!(["mcp"]));
+
+    let res = app
+        .clone()
+        .oneshot(rpc(
+            "/mcp",
+            initialize(),
+            Some(&access_token_for("contacts")),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let token = access_token_for("mcp");
+    let res = app
+        .clone()
+        .oneshot(rpc("/mcp", initialize(), Some(&token), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .oneshot(rpc("/contacts", initialize(), Some(&token), None))
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::UNAUTHORIZED,
+        "an /mcp token is only for /mcp"
+    );
+}
+
+#[tokio::test]
+async fn the_combined_endpoint_serves_only_the_selected_services() {
+    let app = server(&[("ICLOUD_SERVICES", "calendar")]);
+    let s = open_session(&app, "/mcp", TOKEN).await;
+    let tools = list_tools(&app, "/mcp", &s).await;
+    assert!(!tools.is_empty());
+    assert!(
+        names(&tools).iter().all(|n| n.starts_with("calendar_")),
+        "{tools:?}"
+    );
 }
