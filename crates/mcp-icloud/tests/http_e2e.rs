@@ -240,11 +240,39 @@ fn access_token_for(service: &str) -> String {
             client_id: Some("e2e".into()),
             scope: Some(service.into()),
             resource: Some(resource.clone()),
+            ver: Some(sign_in_version()),
+            auth_time: Some(now()),
             ..Payload::default()
         },
         &resource,
     )
     .unwrap()
+}
+
+/// The sign-in version this server's tokens carry: it depends on the owner's password.
+fn sign_in_version() -> String {
+    let mut env = ServiceEnv::new(Box::new(|k: &str| {
+        match k {
+            "PUBLIC_URL" => Some("https://icloud.example.com"),
+            "OAUTH_SIGNING_KEY" => Some(SIGNING_KEY),
+            "OAUTH_ADMIN_PASSWORD" => Some("a long password"),
+            "ICLOUD_EMAIL" => Some("me@icloud.com"),
+            "ICLOUD_APP_PASSWORD" => Some("abcd-efgh-ijkl-mnop"),
+            _ => None,
+        }
+        .map(str::to_string)
+    }));
+    let loaded = icloud_server()
+        .load(&mut env)
+        .unwrap_or_else(|| panic!("{:?}", env.errors));
+    mcp_server_core::oauth::sign_in_version(SIGNING_KEY.as_bytes(), loaded.verifier.as_ref())
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 #[tokio::test]
