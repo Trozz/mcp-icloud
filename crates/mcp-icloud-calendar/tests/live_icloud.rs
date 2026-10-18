@@ -6,6 +6,8 @@
 //! The round trip creates one recurring event in December 2030 named "mcp-icloud-calendar live
 //! test (safe to delete)" and always deletes it again, also when an assertion fails. Output
 //! only prints counts, never event content.
+//! The calendar round trip creates a calendar named "ZZ MCP Probe", renames it to "ZZ MCP Probe
+//! renamed" and deletes it; leftovers with either name are deleted before and after.
 mod support;
 use futures::FutureExt;
 use mcp_icloud_calendar::caldav::caldav_settings;
@@ -253,6 +255,79 @@ async fn live_invitation_scheduling() {
     .catch_unwind()
     .await;
     cleanup(&s).await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+const PROBE: &str = "ZZ MCP Probe";
+
+/// Deletes every calendar left over from an earlier calendar round trip.
+async fn remove_probe_calendars(s: &CalendarServer) {
+    let renamed = format!("{PROBE} renamed");
+    let r = s.list_calendars().await.unwrap();
+    let Ok(v) = serde_json::from_str::<Value>(&support::tools::text(&r)) else {
+        return;
+    };
+    let ids: Vec<String> = v["calendars"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| c["name"] == PROBE || c["name"] == renamed.as_str())
+        .filter_map(|c| c["id"].as_str().map(str::to_string))
+        .collect();
+    for id in ids {
+        let _ = s.delete_calendar(params(json!({"calendar": id}))).await;
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_calendar_management() {
+    let (s, _) = server(false);
+    remove_probe_calendars(&s).await;
+    let outcome = AssertUnwindSafe(async {
+        let created = json(
+            &s.create_calendar(params(json!({"name": PROBE, "color": "#1BADF8"})))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(created["calendar"]["name"], PROBE);
+        assert_eq!(created["calendar"]["writable"], true);
+        let id = created["calendar"]["id"].as_str().unwrap().to_string();
+        println!(
+            "created a calendar, colour {}",
+            created["calendar"]["color"]
+        );
+
+        let renamed = json(
+            &s.rename_calendar(params(json!({
+                "calendar": id, "new_name": format!("{PROBE} renamed"), "color": "#FF2968"
+            })))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(renamed["calendar"]["name"], format!("{PROBE} renamed"));
+        println!("renamed it, colour {}", renamed["calendar"]["color"]);
+
+        json(
+            &s.delete_calendar(params(json!({"calendar": id})))
+                .await
+                .unwrap(),
+        );
+        let listed = json(&s.list_calendars().await.unwrap());
+        assert!(
+            !listed["calendars"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["id"] == id.as_str())
+        );
+        println!("deleted it");
+    })
+    .catch_unwind()
+    .await;
+    remove_probe_calendars(&s).await;
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
