@@ -44,6 +44,7 @@ sequenceDiagram
 `ICLOUD_READ_ONLY` makes services read-only on this server, for example `ICLOUD_READ_ONLY=mail,contacts` keeps calendar writable, and `all` covers every service.
 
 - Clients see only the tools marked read-only.
+- Prompts stay listed; a prompt step that needs a hidden tool tells the model to say so and skip it.
 - Any other tool call returns `read_only: the <service> service is read-only on this server`.
 - It applies on the service's own endpoint and under `/mcp`.
 

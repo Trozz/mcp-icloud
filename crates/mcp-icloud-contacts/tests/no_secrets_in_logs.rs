@@ -1,11 +1,11 @@
-//! Runs a full load, a search, a read, an update, a refused create and a read of a card that cannot
-//! be parsed with every log level enabled and content logging off, and checks that neither
-//! credentials nor contact content reach the logs.
+//! Runs a full load, a search, a read, an update, a contact and a group export, a refused create
+//! and a read of a card that cannot be parsed with every log level enabled and content logging
+//! off, and checks that neither credentials nor contact content reach the logs.
 mod support;
 use serde_json::json;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use support::cards::{PERSON_UID, seed};
+use support::cards::{GROUP_UID, PERSON_UID, seed};
 use support::fake_carddav::{AUTH, FakeCardDav, FakeState, PASSWORD};
 use support::tools::{error_text, json, params, server};
 
@@ -61,6 +61,9 @@ async fn credentials_and_contact_content_never_reach_the_logs() {
             .await
             .unwrap(),
     );
+    for id in [PERSON_UID, GROUP_UID] {
+        json(&s.export_vcard(params(json!({"id": id}))).await.unwrap());
+    }
     error_text(
         &s.create_contact(params(json!({
             "given_name": "Zebedee",

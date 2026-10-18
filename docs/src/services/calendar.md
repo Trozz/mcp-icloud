@@ -17,6 +17,16 @@ Endpoint `/calendar` (or `calendar_<tool>` under [`/mcp`](combined.md)). The cal
 | `delete_event` | write | Delete the series, one occurrence, or this and following occurrences | `event_id`, `scope`, `occurrence_start` |
 | `respond_to_invitation` | write | Accept, decline or tentatively accept an invitation; iCloud sends the reply to the organizer. Registered only with `ICLOUD_ALLOW_INVITES=true` | `event_id`, `response` (`accepted`, `declined`, `tentative`), `occurrence_start` |
 
+## Prompts
+
+Prompts are ready-made requests a client can offer you. They tell the model which tools to call and in what order; they change nothing by themselves.
+
+| Prompt | Arguments | What it does |
+|---|---|---|
+| `plan_week` | `start` (`YYYY-MM-DD`, default today in the active time zone) | Lays out the seven days from `start`, points out overlapping and back-to-back events, lists invitations waiting for your reply and suggests free slots with `find_free_time`. Replies to an invitation only with the answer you give |
+
+Arguments are text; a blank argument takes its default, and an invalid one (a `start` that is not a `YYYY-MM-DD` date) is refused. Replying to invitations needs `ICLOUD_ALLOW_INVITES=true`; without it the model is told to say so and skip that step.
+
 ## Addressing events
 
 Events are addressed by `event_id` as `list_events` returns it. One occurrence of a recurring event is additionally addressed by `occurrence_start`, exactly as `list_events` returns it. Every change is a conditional write: if the event changed in iCloud since it was read, the tool returns a `conflict` error instead of overwriting it.

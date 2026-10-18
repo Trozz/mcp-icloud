@@ -569,16 +569,44 @@ impl CalendarServer {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for CalendarServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(
-                Implementation::new(crate::config::SERVICE_NAME, crate::VERSION).with_icons(
-                    mcp_server_core::service::icons(
-                        include_bytes!("../../assets/icon.png"),
-                        include_str!("../../assets/icon.svg"),
-                    ),
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_prompts()
+                .enable_tools()
+                .build(),
+        )
+        .with_server_info(
+            Implementation::new(crate::config::SERVICE_NAME, crate::VERSION).with_icons(
+                mcp_server_core::service::icons(
+                    include_bytes!("../../assets/icon.png"),
+                    include_str!("../../assets/icon.svg"),
                 ),
-            )
-            .with_instructions(INSTRUCTIONS)
+            ),
+        )
+        .with_instructions(INSTRUCTIONS)
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<rmcp::model::ListPromptsResult, McpError> {
+        Ok(rmcp::model::ListPromptsResult::with_all_items(
+            crate::prompts::list(),
+        ))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: rmcp::model::GetPromptRequestParams,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<rmcp::model::GetPromptResponse, McpError> {
+        let prefix = mcp_server_core::prompt::tool_prefix(&context);
+        let today = Utc::now()
+            .with_timezone(&self.settings.zones.active())
+            .date_naive();
+        crate::prompts::get(&request.name, request.arguments.as_ref(), prefix, today)
+            .map(Into::into)
     }
 }
 

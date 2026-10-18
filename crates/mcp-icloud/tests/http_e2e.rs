@@ -395,7 +395,7 @@ async fn contacts_is_served_at_its_path_with_every_tool() {
         .unwrap();
     let list = rpc_message(res).await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 14, "{tools:?}");
+    assert_eq!(tools.len(), 15, "{tools:?}");
 }
 
 #[tokio::test]
@@ -821,4 +821,216 @@ async fn the_combined_endpoint_serves_only_the_selected_services() {
         names(&tools).iter().all(|n| n.starts_with("calendar_")),
         "{tools:?}"
     );
+}
+
+async fn session_rpc(app: &axum::Router, path: &str, session: &str, body: Value) -> Value {
+    let res = app
+        .clone()
+        .oneshot(rpc(path, body, Some(TOKEN), Some(session)))
+        .await
+        .unwrap();
+    rpc_message(res).await
+}
+
+async fn list_prompts(app: &axum::Router, path: &str, session: &str) -> Vec<Value> {
+    let v = session_rpc(
+        app,
+        path,
+        session,
+        json!({"jsonrpc": "2.0", "id": 5, "method": "prompts/list", "params": {}}),
+    )
+    .await;
+    v["result"]["prompts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{path}: {v}"))
+        .clone()
+}
+
+/// The whole JSON-RPC response of `prompts/get`.
+async fn get_prompt(
+    app: &axum::Router,
+    path: &str,
+    session: &str,
+    name: &str,
+    arguments: Value,
+) -> Value {
+    session_rpc(
+        app,
+        path,
+        session,
+        json!({"jsonrpc": "2.0", "id": 6, "method": "prompts/get",
+            "params": {"name": name, "arguments": arguments}}),
+    )
+    .await
+}
+
+fn prompt_text(v: &Value) -> &str {
+    v["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap_or_default()
+}
+
+fn backticked(text: &str) -> Vec<&str> {
+    text.split('`').skip(1).step_by(2).collect()
+}
+
+#[tokio::test]
+async fn every_endpoint_offers_its_services_prompts() {
+    let app = server(&[]);
+    let expected: [(&str, Vec<&str>); 4] = [
+        ("/mail", vec!["triage_inbox"]),
+        ("/calendar", vec!["plan_week"]),
+        (
+            "/contacts",
+            vec!["birthday_reminders", "clean_up_duplicates"],
+        ),
+        (
+            "/mcp",
+            vec![
+                "mail_triage_inbox",
+                "calendar_plan_week",
+                "contacts_birthday_reminders",
+                "contacts_clean_up_duplicates",
+            ],
+        ),
+    ];
+    for (path, prompts) in expected {
+        let res = app
+            .clone()
+            .oneshot(rpc(path, initialize(), Some(TOKEN), None))
+            .await
+            .unwrap();
+        let init = rpc_message(res).await;
+        assert!(
+            init["result"]["capabilities"]["prompts"].is_object(),
+            "{path}: {init}"
+        );
+        let s = open_session(&app, path, TOKEN).await;
+        assert_eq!(
+            names(&list_prompts(&app, path, &s).await),
+            prompts,
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_combined_endpoint_offers_only_the_selected_services_prompts() {
+    let app = server(&[("ICLOUD_SERVICES", "calendar")]);
+    let s = open_session(&app, "/mcp", TOKEN).await;
+    assert_eq!(
+        names(&list_prompts(&app, "/mcp", &s).await),
+        ["calendar_plan_week"]
+    );
+}
+
+#[tokio::test]
+async fn prompt_texts_name_only_tools_of_their_endpoint() {
+    let app = server(&[("ICLOUD_ALLOW_INVITES", "true")]);
+    for path in ["/mail", "/calendar", "/contacts", "/mcp"] {
+        let s = open_session(&app, path, TOKEN).await;
+        let listed = list_tools(&app, path, &s).await;
+        let tools = names(&listed);
+        for prompt in list_prompts(&app, path, &s).await {
+            let name = prompt["name"].as_str().unwrap();
+            let v = get_prompt(&app, path, &s, name, json!({})).await;
+            let text = prompt_text(&v);
+            let named = backticked(text);
+            assert!(!named.is_empty(), "{path} {name}: {v}");
+            for tool in named {
+                assert!(
+                    tools.contains(&tool),
+                    "{path} {name} names {tool}, which is not a tool on {path}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_combined_endpoint_routes_prompts_by_prefix() {
+    let app = server(&[]);
+    let s = open_session(&app, "/contacts", TOKEN).await;
+    let own = get_prompt(
+        &app,
+        "/contacts",
+        &s,
+        "birthday_reminders",
+        json!({"days": "7"}),
+    )
+    .await;
+    let own = prompt_text(&own).to_string();
+    assert!(
+        own.contains(r#"`upcoming_dates` with {"days": 7}"#),
+        "{own}"
+    );
+
+    let s = open_session(&app, "/mcp", TOKEN).await;
+    let combined = get_prompt(
+        &app,
+        "/mcp",
+        &s,
+        "contacts_birthday_reminders",
+        json!({"days": "7"}),
+    )
+    .await;
+    let combined = prompt_text(&combined).to_string();
+    assert!(
+        combined.contains(r#"`contacts_upcoming_dates` with {"days": 7}"#),
+        "{combined}"
+    );
+    assert_eq!(combined.replace("`contacts_", "`"), own);
+
+    for name in [
+        "birthday_reminders",
+        "reminders_x",
+        "contacts_nope",
+        "contacts_",
+    ] {
+        let v = get_prompt(&app, "/mcp", &s, name, json!({})).await;
+        assert_eq!(v["error"]["code"], -32602, "{name}: {v}");
+        assert_eq!(
+            v["error"]["message"],
+            format!("prompt '{name}' not found"),
+            "{name}: {v}"
+        );
+        assert!(v["result"].is_null(), "{name}: {v}");
+    }
+}
+
+#[tokio::test]
+async fn invalid_prompt_arguments_are_invalid_params() {
+    let app = server(&[]);
+    let cases = [
+        ("/mail", "triage_inbox", json!({"limit": "0"})),
+        ("/mail", "triage_inbox", json!({"limit": 25})),
+        ("/calendar", "plan_week", json!({"start": "2026-13-01"})),
+        ("/contacts", "birthday_reminders", json!({"days": "367"})),
+        ("/mcp", "mail_triage_inbox", json!({"limit": "101"})),
+        ("/mcp", "calendar_plan_week", json!({"start": "2026-2-3"})),
+    ];
+    for (path, name, arguments) in cases {
+        let s = open_session(&app, path, TOKEN).await;
+        let v = get_prompt(&app, path, &s, name, arguments.clone()).await;
+        assert_eq!(v["error"]["code"], -32602, "{path} {name} {arguments}: {v}");
+    }
+}
+
+#[tokio::test]
+async fn a_read_only_service_still_offers_its_prompts() {
+    let app = server(&[("ICLOUD_READ_ONLY", "contacts")]);
+    for (path, name) in [
+        ("/contacts", "clean_up_duplicates"),
+        ("/mcp", "contacts_clean_up_duplicates"),
+    ] {
+        let s = open_session(&app, path, TOKEN).await;
+        assert!(
+            names(&list_prompts(&app, path, &s).await).contains(&name),
+            "{path}"
+        );
+        let v = get_prompt(&app, path, &s, name, json!({})).await;
+        let text = prompt_text(&v);
+        assert!(text.contains("merge_contacts`"), "{path}: {v}");
+        assert!(text.contains("say so and stop that step"), "{path}: {v}");
+    }
 }
