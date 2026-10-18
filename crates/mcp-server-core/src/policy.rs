@@ -20,9 +20,9 @@ use rmcp::service::{
 use rmcp::{ErrorData as McpError, ServerHandler};
 use serde::Serialize;
 use std::borrow::Cow;
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, Permissions};
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -68,7 +68,7 @@ struct AuditFile {
 }
 
 impl AuditLog {
-    /// `path`: the `AUDIT_LOG_PATH` file, opened on the first write (created with mode 0600).
+    /// `path`: the `AUDIT_LOG_PATH` file, opened on the first write (created with mode 0600, an existing file is narrowed to 0600).
     pub fn new(path: Option<PathBuf>) -> Self {
         Self {
             file: path.map(|path| {
@@ -129,6 +129,7 @@ impl AuditFile {
                 .append(true)
                 .mode(0o600)
                 .open(&self.path)?;
+            file.set_permissions(Permissions::from_mode(0o600))?;
             self.file = Some(file);
         }
         Ok(self.file.as_mut().expect("opened above"))
@@ -507,6 +508,22 @@ mod tests {
             file.last_warn.unwrap() > first,
             "warns again after a minute"
         );
+    }
+
+    #[test]
+    fn an_existing_audit_file_is_narrowed_to_0600() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        std::fs::write(&path, "").unwrap();
+        std::fs::set_permissions(&path, Permissions::from_mode(0o644)).unwrap();
+        let mut file = AuditFile {
+            path: path.clone(),
+            file: None,
+            last_warn: None,
+        };
+        file.append(&line());
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
