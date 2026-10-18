@@ -2,9 +2,9 @@
 //! ICLOUD_EMAIL and ICLOUD_APP_PASSWORD, for example through 1Password:
 //!   op run --env-file="${APP_ENV:-$HOME/docker/mcp-icloud/app.env}" -- \
 //!     cargo test -p mcp-icloud-contacts --test live_icloud -- --ignored --nocapture --test-threads=1
-//! The round trip creates a contact "ZZ MCP Probe" and a group "ZZ MCP Probe Group" with made-up
-//! data and always deletes them again, also when an assertion fails. Output only prints counts,
-//! never contact content.
+//! The round trips create contacts "ZZ MCP Probe" and a group "ZZ MCP Probe Group" with made-up
+//! data (the merge test two such contacts, merged into one) and always delete them again, also
+//! when an assertion fails. Output only prints counts, never contact content.
 mod support;
 use futures::FutureExt;
 use mcp_icloud_contacts::config::DEFAULT_CARDDAV_URL;
@@ -171,4 +171,82 @@ async fn round_trip(s: &ContactsServer) {
     let groups = json(&server().list_groups().await.unwrap());
     assert!(group_entry(&groups, &gid).is_none());
     println!("group deleted: ok");
+}
+
+#[tokio::test]
+#[ignore]
+async fn merge_two_probe_contacts() {
+    let s = server();
+    cleanup(&s).await;
+    let result = AssertUnwindSafe(merge_round_trip(&s)).catch_unwind().await;
+    cleanup(&s).await;
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn merge_round_trip(s: &ContactsServer) {
+    let create = |extra: Value| {
+        let mut args = json!({
+            "given_name": "ZZ MCP",
+            "family_name": "Probe",
+            "emails": [{"value": "probe@example.com", "label": "home"}],
+        });
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        args
+    };
+    let keep = json(&s.create_contact(params(create(json!({})))).await.unwrap());
+    let other = json(
+        &s.create_contact(params(create(json!({
+            "phones": [{"value": "+44 7700 900123", "label": "mobile"}],
+            "note": "Created by the mcp-icloud live test, safe to delete"
+        }))))
+        .await
+        .unwrap(),
+    );
+    let (keep_id, other_id) = (keep["id"].as_str().unwrap(), other["id"].as_str().unwrap());
+    let found = json(&server().find_duplicate_contacts().await.unwrap());
+    let group = found["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| {
+            g["contacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["id"] == keep_id)
+        })
+        .expect("the probe contacts are found as duplicates");
+    assert_eq!(group["contacts"].as_array().unwrap().len(), 2);
+    println!("duplicates found: ok");
+
+    let merged = json(
+        &s.merge_contacts(params(json!({"keep_id": keep_id, "merge_ids": [other_id]})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(merged["not_deleted"], json!([]));
+    let fresh = server();
+    let got = json(
+        &fresh
+            .get_contact(params(json!({"id": keep_id})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(got["phones"][0]["value"], "+44 7700 900123");
+    assert_eq!(
+        got["note"],
+        "Created by the mcp-icloud live test, safe to delete"
+    );
+    let e = error_text(
+        &fresh
+            .get_contact(params(json!({"id": other_id})))
+            .await
+            .unwrap(),
+    );
+    assert!(e.starts_with("not_found:"), "{e}");
+    println!("merged: ok");
 }

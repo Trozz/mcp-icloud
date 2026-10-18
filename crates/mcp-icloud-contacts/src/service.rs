@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_from_env_with_eleven_tools() {
+    fn builds_from_env_with_every_tool() {
         let mut e = env(&[
             ("ICLOUD_EMAIL", "user@example.com"),
             ("ICLOUD_APP_PASSWORD", "abcd-efgh-ijkl-mnop"),
@@ -101,13 +101,16 @@ mod tests {
         assert_eq!(
             svc.tool_names(),
             [
+                "copy_contact_photo",
                 "create_contact",
                 "create_group",
                 "delete_contact",
                 "delete_group",
+                "find_duplicate_contacts",
                 "get_contact",
                 "get_my_contact",
                 "list_groups",
+                "merge_contacts",
                 "search_contacts",
                 "upcoming_dates",
                 "update_contact",

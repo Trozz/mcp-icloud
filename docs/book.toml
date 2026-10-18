@@ -1,0 +1,19 @@
+[book]
+title = "mcp-icloud"
+description = "A self-hosted MCP server for iCloud Mail, Calendar and Contacts"
+language = "en"
+src = "src"
+
+[build]
+create-missing = false
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output]
+
+[output.html]
+site-url = "/mcp-icloud/"
+git-repository-url = "https://github.com/Trozz/mcp-icloud"
+edit-url-template = "https://github.com/Trozz/mcp-icloud/edit/develop/docs/{path}"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
