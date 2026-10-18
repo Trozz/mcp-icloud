@@ -6,7 +6,7 @@ A self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server f
 |---|---|---|
 | Mail | `/mail` | Search, read, organise and draft email; optionally send |
 | Calendar | `/calendar` | List, search, create, edit and delete events, including recurring ones; find free time; optionally manage invitations |
-| Contacts | `/contacts` | Search, read, create, edit and delete contacts; manage groups (iOS Lists) |
+| Contacts | `/contacts` | Search, read, create, edit and delete contacts; manage groups (iOS Lists); upcoming birthdays and anniversaries; find and merge duplicates |
 
 - Single static Rust binary, shipped as a `FROM scratch` container image.
 - TLS end to end: the server terminates TLS itself, and every connection to Apple is verified.
@@ -89,6 +89,7 @@ Reminders are not available: Apple no longer exposes upgraded iCloud Reminders o
 | `find_duplicate_contacts` | Groups of likely duplicates: contacts that share an email address, a phone number (in any format) or a full name of at least two words, with the reasons. The first contact of each group is the best one to keep (it has a photo, or the most details) |
 | `merge_contacts` | Merge up to 10 contacts into one (`keep_id`, `merge_ids`): emails, phones, URLs, addresses, dates and related names the kept contact lacks are added, its empty fields are filled, notes are combined, groups move to the kept contact, then the others are deleted. Photos are not copied (`photo_not_kept` lists them). Your own card can be kept but not merged away |
 | `copy_contact_photo` | Copy one contact's photo onto another (`from_id`, `to_id`), for example before merging into a contact without a photo |
+| `upcoming_dates` | Birthdays, anniversaries and other dates from today to `days` ahead (default 30, at most 366), soonest first, with the days from today and, when the year is known, the age or number of years. "Today" is the date in `CONTACTS_TIMEZONE`; 29 February falls on 28 February in other years |
 
 Contacts and groups are addressed by `id`, as `search_contacts` and `list_groups` return it. Labels are plain words: `home`, `work`, `other`, `mobile`, `iPhone`, `main`, `pager`, `home fax`, `work fax`, `home page`, `anniversary`, relations such as `mother` or `friend`, or any custom text. Birthdays and dates are `YYYY-MM-DD`, or `--MM-DD` without a year.
 
@@ -218,6 +219,7 @@ Every secret can also be read from a file by appending `_FILE` to its name, for 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `CARDDAV_URL` | no | `https://contacts.icloud.com` | CardDAV entry point. Must be `https`, except a loopback address for testing |
+| `CONTACTS_TIMEZONE` | no | `UTC` | IANA time zone that decides "today" for `upcoming_dates`, for example `Europe/London`. An unknown name stops startup |
 
 ## TLS
 
