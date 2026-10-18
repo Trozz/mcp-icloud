@@ -398,7 +398,7 @@ async fn contacts_is_served_at_its_path_with_every_tool() {
         .unwrap();
     let list = rpc_message(res).await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 14, "{tools:?}");
+    assert_eq!(tools.len(), 15, "{tools:?}");
 }
 
 #[tokio::test]

@@ -106,6 +106,7 @@ mod tests {
                 "create_group",
                 "delete_contact",
                 "delete_group",
+                "export_vcard",
                 "find_duplicate_contacts",
                 "get_contact",
                 "get_my_contact",

@@ -12,6 +12,7 @@ Endpoint `/contacts` (or `contacts_<tool>` under [`/mcp`](combined.md)). The con
 | `list_groups` | read | Every group with its id, name and number of members | none |
 | `upcoming_dates` | read | Birthdays, anniversaries and other dates from today up to `days` ahead, soonest first, with the days from today and, when the year is known, the age or number of years | `days` (1 to 366, default 30) |
 | `find_duplicate_contacts` | read | Groups of contacts that look like the same person: a shared email, a shared phone number or the same full name, with the reasons, best contact to keep first | none |
+| `export_vcard` | read | A contact, or every member of a group, as vCard (`.vcf`) text exactly as iCloud stores it, returned as a `text/vcard` resource with a summary | `id` |
 | `create_contact` | write | Create a contact. Needs a given name, family name, display name or organization | contact fields (below) |
 | `update_contact` | write | Change only the fields you pass; `""` clears one. A list you pass replaces that whole list | `id` plus contact fields |
 | `delete_contact` | write | Delete a contact and remove it from every group. Your own card cannot be deleted | `id` |
@@ -59,6 +60,13 @@ Only the lines a change touches are rewritten. Photos, Apple's own fields and an
 - `merge_contacts` checks everything before writing anything. It adds the emails, phones, URLs, addresses, dates and related names the kept contact lacks, fills its empty single fields, appends notes, moves group memberships to the kept contact, then deletes the merged contacts. Other fields of merged contacts (social profiles, instant messaging, categories, custom X- fields) are not kept. Your own card can be kept but never merged away.
 - Photos are never copied by a merge. When a merged contact had a photo and the kept one has none, the result lists it under `photo_not_kept`; use `copy_contact_photo` first, or keep the contact with the photo.
 - If a later step fails (a group update or a delete), earlier steps are not undone; the result lists what was not done.
+
+## Export
+
+- `export_vcard` returns a JSON summary (`id`, `kind`, `display_name`, `cards`, `missing_members`, `bytes`) and the vCard text as a `text/vcard` resource at `icloud-contacts://export/<id>.vcf` (a space, `/` or `%` in the id is percent-encoded).
+- A contact comes exactly as iCloud stores it: Apple's folding, photo lines and own fields included. The server writes the card it holds back unchanged; the only differences readers could see are in text iCloud never stores: `BEGIN` and `END` lines are written in capitals, line endings are CRLF, blank lines are dropped and the last line ends with a line break.
+- A group gives every member's card, one after another, in the group's member order, each member once. The group's own card is not included. Member ids that are not readable contacts (deleted contacts, other groups, cards the server cannot parse) are skipped and listed under `missing_members`. A group without readable members gives an empty file.
+- There is no size limit beyond what iCloud stores, and card text is never logged.
 
 ## iCloud notes
 
