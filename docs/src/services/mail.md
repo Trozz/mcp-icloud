@@ -1,0 +1,37 @@
+# Mail
+
+Endpoint `/mail` (or `mail_<tool>` under [`/mcp`](combined.md)). The mail service reads and organises your iCloud mail over IMAP and saves drafts; it sends mail over SMTP only when you allow it.
+
+## Tools
+
+| Tool | Kind | What it does | Key parameters |
+|---|---|---|---|
+| `list_mailboxes` | read | Mailboxes with their role (Inbox, Sent, Drafts, Trash, Junk, Archive), total and unread counts | none |
+| `search_messages` | read | Search one mailbox, newest first; every filter is optional and they combine with AND. Returns summaries, the mailbox `uidvalidity` and `next_cursor` | `mailbox` (default `INBOX`), `from`, `to`, `subject`, `text`, `since`, `before` (`YYYY-MM-DD`), `unseen`, `flagged`, `limit` (1 to 100, default 25), `cursor` |
+| `get_message` | read | Headers, body and attachment list of one message. Does not mark it as read | `mailbox`, `uid`, `format` (`text`, `html` or `raw`), `max_chars` (default 20000) |
+| `get_attachment` | read | One attachment as an embedded base64 resource, up to `MAX_ATTACHMENT_BYTES` | `mailbox`, `uid`, `index` (from `get_message`) |
+| `get_thread` | read | The conversation a message belongs to, linked by Message-ID, References and In-Reply-To, from its mailbox and Sent, ordered by date | `mailbox`, `uid` |
+| `mark_messages` | write | Mark as read or unread, flagged or unflagged | `mailbox`, `uids` (1 to 100), `seen`, `flagged`, `uidvalidity` |
+| `move_messages` | write | Move messages to another mailbox | `mailbox`, `uids`, `target_mailbox`, `uidvalidity` |
+| `delete_messages` | write | Move messages to Trash; with `permanent: true`, messages already in Trash are removed for good | `mailbox`, `uids`, `permanent`, `uidvalidity` |
+| `create_mailbox` | write | Create a mailbox (folder) | `name` |
+| `create_draft` | write | Save a new draft in Drafts. Nothing is sent | `to`, `cc`, `bcc` (`name@example.com` or `Name <name@example.com>`), `subject`, `body_text`, `body_html` |
+| `create_reply_draft` | write | Save a threaded reply draft with the original quoted. Nothing is sent | `mailbox`, `uid`, `body_text`, `reply_all` |
+| `create_forward_draft` | write | Save a forward draft, optionally with the original attachments. Nothing is sent | `mailbox`, `uid`, `to`, `body_text`, `include_attachments` (default `true`) |
+| `send_draft` | write | Send a draft over iCloud SMTP, save a copy to Sent and remove the draft. Registered only with `ICLOUD_ALLOW_SEND=true` | `uid` (in Drafts), `uidvalidity` |
+
+## Addressing messages
+
+Messages are addressed by mailbox plus UID. Listings also return the mailbox `uidvalidity`; pass it back to the changing tools. If the mailbox was rebuilt in the meantime (its `uidvalidity` changed), the tool refuses instead of touching a different message that now has the same UID.
+
+## Sending
+
+- Without `ICLOUD_ALLOW_SEND=true`, `send_draft` is not registered: clients do not see it, and the other tools can only save drafts.
+- `send_draft` only sends messages flagged as drafts in the Drafts mailbox, and sends one message at a time.
+- `ICLOUD_FROM_NAME` sets the display name on drafts; the address is always `ICLOUD_EMAIL`.
+
+## iCloud notes
+
+- When the server supports IMAP `MOVE` it is used; otherwise moves use COPY, then flag and expunge only the moved UIDs (UIDPLUS), so other deleted messages in the mailbox are never expunged.
+- Message bodies are cached in memory (`CACHE_MAX_BYTES`), so reading the same message twice does not download it again.
+- Idle IMAP connections are closed after `IMAP_IDLE_TIMEOUT` seconds and reopened on demand.
