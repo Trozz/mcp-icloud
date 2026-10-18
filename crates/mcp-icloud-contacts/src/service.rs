@@ -79,7 +79,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_from_env_with_ten_tools() {
+    fn builds_from_env_with_every_tool() {
         let mut e = env(&[
             ("ICLOUD_EMAIL", "user@example.com"),
             ("ICLOUD_APP_PASSWORD", "abcd-efgh-ijkl-mnop"),
@@ -95,6 +95,7 @@ mod tests {
                 "create_group",
                 "delete_contact",
                 "delete_group",
+                "find_duplicate_contacts",
                 "get_contact",
                 "get_my_contact",
                 "list_groups",
