@@ -1,5 +1,6 @@
 pub mod book;
 pub mod config;
+pub mod dates;
 pub mod error;
 pub mod index;
 pub mod search;
