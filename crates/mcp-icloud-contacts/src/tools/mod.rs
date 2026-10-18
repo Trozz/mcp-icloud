@@ -15,6 +15,7 @@ use tracing::Instrument;
 
 pub mod dates;
 pub mod duplicates;
+pub mod export;
 pub mod groups;
 pub mod merge;
 pub mod photo;
@@ -47,7 +48,8 @@ impl ContactsServer {
                 + Self::dates_router()
                 + Self::duplicate_router()
                 + Self::merge_router()
-                + Self::photo_router(),
+                + Self::photo_router()
+                + Self::export_router(),
         }
     }
 

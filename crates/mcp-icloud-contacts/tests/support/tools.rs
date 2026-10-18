@@ -2,7 +2,7 @@ use super::fake_carddav::FakeCardDav;
 use mcp_icloud_contacts::index::Store;
 use mcp_icloud_contacts::tools::ContactsServer;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::CallToolResult;
+use rmcp::model::{CallToolResult, ResourceContents};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
@@ -36,4 +36,23 @@ pub fn json(r: &CallToolResult) -> serde_json::Value {
 pub fn error_text(r: &CallToolResult) -> String {
     assert!(is_error(r), "expected a tool error, got: {}", text(r));
     text(r)
+}
+
+/// The embedded text resource of a successful result (the second block): uri, MIME type and text.
+pub fn text_resource(r: &CallToolResult) -> (String, Option<String>, String) {
+    assert!(!is_error(r), "tool error: {}", text(r));
+    let res = &r.content[1]
+        .as_resource()
+        .expect("second content block is an embedded resource")
+        .resource;
+    let ResourceContents::TextResourceContents {
+        uri,
+        mime_type,
+        text,
+        ..
+    } = res
+    else {
+        panic!("expected a text resource")
+    };
+    (uri.clone(), mime_type.clone(), text.clone())
 }
