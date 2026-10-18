@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = ["crates/mcp-server-core", "crates/mcp-icloud-dav", "crates/mcp-icloud-mail", "crates/mcp-icloud-calendar", "crates/mcp-icloud-contacts", "crates/mcp-icloud"]
+
+[workspace.package]
+version = "0.0.0-dev"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/Trozz/mcp-icloud"
+
+[workspace.dependencies]
+anyhow = "1.0.104"
+thiserror = "2.0.21"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.53.3", features = ["full"] }
+tokio-util = "0.7.20"
+axum = "0.8.9"
+axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "logging", "tls12"] }
+webpki-roots = "1.0.9"
+rcgen = "0.14.10"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+subtle = "2.6.1"
+sha2 = "0.11.1"
+base64 = "0.23.1"
+secrecy = "0.10.3"
+url = "2.5.8"
+uuid = { version = "1.28.0", features = ["v4"] }
+tower-http = { version = "0.7.1", features = ["limit", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+opentelemetry = { version = "0.33.1", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
+tracing-opentelemetry = { version = "0.34.0", default-features = false }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false, features = ["http-listener"] }
+tower = { version = "0.5.3", features = ["util"] }
+http-body-util = "0.1.5"
+tempfile = "3.27.0"
+rmcp = { version = "=3.5.1", features = ["server", "macros", "transport-streamable-http-server"] }
+async-imap = { version = "=0.12.0", default-features = false, features = ["runtime-tokio"] }
+futures = "0.3.34"
+mail-parser = "=0.11.9"
+mail-builder = "=1.0.0"
+lettre = { version = "=0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "rustls", "ring", "webpki-roots", "builder", "hostname", "pool"] }
+html2text = "0.17.3"
+lru = "0.18.5"
+rrule = { version = "=0.14.0", default-features = false }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10.4"
+quick-xml = "=0.42.0"
+unicode-normalization = "0.1.26"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

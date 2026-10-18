@@ -1,0 +1,45 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Apple Inc.//iOS 27.2//EN
+N:Example;Alex;J.;Dr.;Jr.
+FN:Dr. Alex J. Example Jr.
+NICKNAME:Lex
+ORG:Example Widgets Ltd;Research
+TITLE:Chief Tinkerer
+item1.X-ADDRESSING-GRAMMAR:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIj
+ JCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWlt
+ cXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSkw
+ ==
+EMAIL;type=INTERNET;type=HOME;type=pref:alex@example.com
+item2.EMAIL;type=INTERNET:alex.work@example.org
+item2.X-ABLabel:office
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 900123
+TEL;type=HOME;type=VOICE:07700 900456
+item3.TEL:+1 202-555-0123
+item3.X-ABLabel:boat
+item4.ADR;type=HOME;type=pref:;;1 Example Street\nFlat 2;Exampleton;Example
+  County;EX1 2AB;United Kingdom
+item4.X-ABADR:gb
+item4.X-APPLE-SUBLOCALITY:Old Town
+item5.URL;type=pref:https://example.com/alex
+item5.X-ABLabel:_$!<HomePage>!$_
+BDAY;X-APPLE-OMIT-YEAR=1604:1604-05-12
+item6.X-ABDATE:2010-06-01
+item6.X-ABLabel:_$!<Anniversary>!$_
+item7.X-ABRELATEDNAMES:Sam Example
+item7.X-ABLabel:_$!<Mother>!$_
+item8.X-ABRELATEDNAMES:Robin Example
+item8.X-ABLabel:best friend
+IMPP;X-SERVICE-TYPE=Skype;type=pref:skype:alex.example
+X-SOCIALPROFILE;type=twitter;x-user=alexexample:https://twitter.com/alexexa
+ mple
+NOTE:Met at the conference\, 2019.\nLikes tea.
+PHOTO;TYPE=JPEG;X-ABCROP-RECTANGLE=ABClipRect_1&0&359&2151&2151&AAECAwQFBgc
+ ICQoLDA0ODw==;VALUE=uri:https://gateway.icloud.com/contacts/1234567890/ck/c
+ ard/0123456789abcdef0123456789abcdef
+X-SHARED-PHOTO-DISPLAY-PREF:ALWAYS_ASK
+REV:2026-10-17T18:23:20Z
+X-IMAGETYPE:PHOTO
+X-IMAGEHASH:AAECAwQFBgcICQoLDA0ODw==
+UID:5F1C2D3E-4A5B-4C6D-8E7F-901234567890
+END:VCARD
