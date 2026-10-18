@@ -2,6 +2,7 @@
 
 use crate::error;
 use crate::index::Store;
+use chrono_tz::Tz;
 use mcp_server_core::observability::content_logging_enabled;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -12,7 +13,11 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::Instrument;
 
+pub mod dates;
+pub mod duplicates;
 pub mod groups;
+pub mod merge;
+pub mod photo;
 pub mod read;
 pub mod write;
 
@@ -20,11 +25,14 @@ const INSTRUCTIONS: &str = "Tools for the iCloud Contacts of one account. \
 Contacts and groups (iOS Lists) are addressed by id from search_contacts or list_groups. \
 update_contact changes only the fields you pass; a list you pass (emails, phones, urls, addresses, dates, related) replaces that whole list, so include the entries to keep exactly as get_contact returned them. \
 Labels are plain words such as home, work, mobile, iPhone, home page or mother. \
-get_my_contact returns the owner's own card.";
+get_my_contact returns the owner's own card. \
+upcoming_dates lists the birthdays and anniversaries coming up.";
 
 #[derive(Clone)]
 pub struct ContactsServer {
     pub(crate) store: Arc<Store>,
+    /// Time zone of "today" for upcoming_dates.
+    pub(crate) timezone: Tz,
     tool_router: ToolRouter<ContactsServer>,
 }
 
@@ -32,8 +40,21 @@ impl ContactsServer {
     pub fn new(store: Arc<Store>) -> Self {
         Self {
             store,
-            tool_router: Self::read_router() + Self::write_router() + Self::group_router(),
+            timezone: Tz::UTC,
+            tool_router: Self::read_router()
+                + Self::write_router()
+                + Self::group_router()
+                + Self::dates_router()
+                + Self::duplicate_router()
+                + Self::merge_router()
+                + Self::photo_router(),
         }
+    }
+
+    /// The time zone that decides "today" for upcoming_dates (UTC by default).
+    pub fn with_timezone(mut self, timezone: Tz) -> Self {
+        self.timezone = timezone;
+        self
     }
 
     /// Names of the registered tools, sorted.

@@ -1,3 +1,4 @@
+use chrono_tz::Tz;
 use mcp_server_core::config::EnvReader;
 use secrecy::SecretString;
 use url::Url;
@@ -5,12 +6,15 @@ use url::Url;
 /// MCP `serverInfo.name` of the contacts service.
 pub const SERVICE_NAME: &str = "mcp-icloud-contacts";
 pub const DEFAULT_CARDDAV_URL: &str = "https://contacts.icloud.com";
+/// Time zone of "today" for `upcoming_dates` when `CONTACTS_TIMEZONE` is not set.
+pub const DEFAULT_TIMEZONE: &str = "UTC";
 
 /// Contacts settings only: the server binary owns the core configuration (URL, OAuth, TLS, logging).
 pub struct ContactsConfig {
     pub email: String,
     pub app_password: SecretString,
     pub carddav_url: Url,
+    pub timezone: Tz,
 }
 
 impl ContactsConfig {
@@ -34,6 +38,18 @@ impl ContactsConfig {
                 None
             }
         };
+        let tz_name = env
+            .optional("CONTACTS_TIMEZONE")
+            .unwrap_or_else(|| DEFAULT_TIMEZONE.to_string());
+        let timezone = match tz_name.parse::<Tz>() {
+            Ok(tz) => Some(tz),
+            Err(_) => {
+                env.errors.push(format!(
+                    "CONTACTS_TIMEZONE {tz_name:?} is not an IANA time zone name such as Europe/London"
+                ));
+                None
+            }
+        };
         if env.errors.len() != errors_before {
             return None;
         }
@@ -41,6 +57,7 @@ impl ContactsConfig {
             email: email?,
             app_password: app_password?,
             carddav_url: carddav_url?,
+            timezone: timezone?,
         })
     }
 }
@@ -95,6 +112,26 @@ mod tests {
         assert_eq!(c.email, "user@example.com");
         assert_eq!(c.app_password.expose_secret(), "abcd-efgh-ijkl-mnop");
         assert_eq!(c.carddav_url.as_str(), "https://contacts.icloud.com/");
+        assert_eq!(c.timezone, chrono_tz::UTC);
+    }
+
+    #[test]
+    fn contacts_timezone_sets_today_for_upcoming_dates() {
+        let (c, errors) = load(&[("CONTACTS_TIMEZONE", "Europe/London")]);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(c.unwrap().timezone, chrono_tz::Europe::London);
+    }
+
+    #[test]
+    fn an_unknown_contacts_timezone_is_reported() {
+        let (c, errors) = load(&[("CONTACTS_TIMEZONE", "Mars/Olympus")]);
+        assert!(c.is_none());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("CONTACTS_TIMEZONE") && e.contains("Mars/Olympus")),
+            "{errors:?}"
+        );
     }
 
     #[test]
@@ -177,7 +214,7 @@ mod tests {
         let read = read.lock().unwrap();
         for k in read.iter() {
             assert!(
-                k.starts_with("ICLOUD_") || k.starts_with("CARDDAV_"),
+                k.starts_with("ICLOUD_") || k.starts_with("CARDDAV_") || k.starts_with("CONTACTS_"),
                 "contacts config read a server variable: {k}"
             );
         }

@@ -13,7 +13,7 @@ pub fn normalize(s: &str) -> String {
         .to_lowercase()
 }
 
-fn digits(s: &str) -> String {
+pub(crate) fn digits(s: &str) -> String {
     s.chars().filter(char::is_ascii_digit).collect()
 }
 

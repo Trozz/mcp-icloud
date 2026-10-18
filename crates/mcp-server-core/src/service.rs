@@ -1,4 +1,6 @@
+use crate::combined::DynHandler;
 use crate::config::{CoreConfig, EnvReader};
+use crate::policy::Guarded;
 use crate::server::BODY_LIMIT;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -53,6 +55,9 @@ pub trait Service: Send + Sync + 'static {
     }
     /// The rmcp Streamable HTTP service for this service, mounted by core at `/<name>`.
     fn router(self: Arc<Self>, ctx: &ServiceContext) -> axum::Router;
+    /// This service's MCP handler, for serving it with the others on the combined `/mcp`
+    /// endpoint. Called once per session, like the router's factory.
+    fn handler(&self) -> DynHandler;
 }
 
 /// `scheme://host:port` for `public_url`, with the scheme's default port made explicit so rmcp
@@ -94,8 +99,11 @@ where
         .enforce_origin_validation()
         .with_max_request_body_bytes(BODY_LIMIT)
         .with_cancellation_token(ctx.shutdown.clone());
-    let service =
-        StreamableHttpService::new(factory, Arc::new(LocalSessionManager::default()), config);
+    let service = StreamableHttpService::new(
+        move || factory().map(Guarded::new),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    );
     axum::Router::new().fallback_service(service)
 }
 

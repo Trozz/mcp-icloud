@@ -5,3 +5,4 @@ target
 docs/superpowers
 *.md
 !README.md
+docs

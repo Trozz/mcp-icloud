@@ -79,8 +79,6 @@ jobs:
       - name: Append install instructions
         env:
           VERSION: ${{ needs.version.outputs.version }}
-          TAG: ${{ needs.version.outputs.tag }}
-          REPO: ${{ github.repository }}
         run: |
           cat >> NOTES.md <<EOF
 
@@ -115,7 +113,7 @@ jobs:
 
           Upgrading from mcp-icloud-mail: mail moved from \`/mcp\` to \`/mail\`; re-add the connector.
 
-          Full configuration reference: https://github.com/${REPO}/blob/${TAG}/README.md
+          Full configuration reference: https://trozz.github.io/mcp-icloud/configuration.html
           EOF
       - uses: softprops/action-gh-release@v3
         with:

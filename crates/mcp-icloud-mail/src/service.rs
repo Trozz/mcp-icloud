@@ -4,6 +4,7 @@ use crate::imap::{ImapClient, ImapSettings};
 use crate::mail::build::Identity;
 use crate::smtp::{Sender, SmtpSender};
 use crate::tools::{MailServer, ToolSettings};
+use mcp_server_core::combined::DynHandler;
 use mcp_server_core::service::{Service, ServiceContext, ServiceEnv, mcp_service};
 use std::sync::Arc;
 
@@ -52,6 +53,10 @@ impl Service for MailService {
 
     fn router(self: Arc<Self>, ctx: &ServiceContext) -> axum::Router {
         mcp_service(ctx, move || Ok(self.server()))
+    }
+
+    fn handler(&self) -> DynHandler {
+        DynHandler::new(self.server())
     }
 }
 
