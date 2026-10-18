@@ -362,7 +362,7 @@ async fn favicon_needs_no_auth() {
 }
 
 #[tokio::test]
-async fn contacts_is_served_at_its_path_with_ten_tools() {
+async fn contacts_is_served_at_its_path_with_eleven_tools() {
     let app = server(&[]);
     let res = app
         .clone()
@@ -398,7 +398,7 @@ async fn contacts_is_served_at_its_path_with_ten_tools() {
         .unwrap();
     let list = rpc_message(res).await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 10, "{tools:?}");
+    assert_eq!(tools.len(), 11, "{tools:?}");
 }
 
 #[tokio::test]

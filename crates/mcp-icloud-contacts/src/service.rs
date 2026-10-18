@@ -1,6 +1,7 @@
 use crate::config::ContactsConfig;
 use crate::index::Store;
 use crate::tools::ContactsServer;
+use chrono_tz::Tz;
 use mcp_icloud_dav::client::{DavClient, DavSettings, Protocol};
 use mcp_server_core::combined::DynHandler;
 use mcp_server_core::service::{Service, ServiceContext, ServiceEnv, mcp_service};
@@ -9,15 +10,16 @@ use std::sync::Arc;
 /// The contacts service, mounted by the server at `/contacts`.
 pub struct ContactsService {
     store: Arc<Store>,
+    timezone: Tz,
 }
 
 impl ContactsService {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<Store>, timezone: Tz) -> Self {
+        Self { store, timezone }
     }
 
     fn server(&self) -> ContactsServer {
-        ContactsServer::new(self.store.clone())
+        ContactsServer::new(self.store.clone()).with_timezone(self.timezone)
     }
 }
 
@@ -67,7 +69,10 @@ pub fn from_env(env: &mut ServiceEnv) -> Option<Arc<dyn Service>> {
             return None;
         }
     };
-    Some(Arc::new(ContactsService::new(Arc::new(Store::new(client)))))
+    Some(Arc::new(ContactsService::new(
+        Arc::new(Store::new(client)),
+        cfg.timezone,
+    )))
 }
 
 #[cfg(test)]
@@ -84,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_from_env_with_ten_tools() {
+    fn builds_from_env_with_eleven_tools() {
         let mut e = env(&[
             ("ICLOUD_EMAIL", "user@example.com"),
             ("ICLOUD_APP_PASSWORD", "abcd-efgh-ijkl-mnop"),
@@ -104,6 +109,7 @@ mod tests {
                 "get_my_contact",
                 "list_groups",
                 "search_contacts",
+                "upcoming_dates",
                 "update_contact",
                 "update_group",
             ]
