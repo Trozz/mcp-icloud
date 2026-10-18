@@ -1,4 +1,4 @@
-use super::client::{Conn, ImapClient, list_mailboxes, select, with_conn};
+use super::client::{Conn, ImapClient, list_mailboxes, role_for, select, with_conn};
 use super::proto::{append_literal, quote, run_checked, uid_set};
 use super::read::search_uids;
 use super::types::Role;
@@ -33,6 +33,32 @@ async fn known_mailbox(c: &mut Conn, name: &str) -> Result<()> {
         return Ok(());
     }
     Err(MailError::MailboxNotFound(name.to_string()))
+}
+
+fn system_mailbox(name: &str) -> MailError {
+    MailError::Invalid(format!("{name} is a system mailbox"))
+}
+
+/// Re-lists the mailboxes and checks that `name` is one of them and has no role (INBOX, Sent,
+/// Drafts, Trash, Junk, Archive), so a rename or delete never touches a system mailbox.
+async fn user_mailbox(c: &mut Conn, name: &str) -> Result<()> {
+    c.mailboxes = list_mailboxes(&mut c.session).await?;
+    let Some(m) = c.mailboxes.iter().find(|m| m.name == name) else {
+        return Err(MailError::MailboxNotFound(name.to_string()));
+    };
+    if m.role.is_some() {
+        return Err(system_mailbox(name));
+    }
+    Ok(())
+}
+
+/// True when another listed mailbox sits below `name` (`name` + delimiter + more).
+fn has_children(c: &Conn, name: &str) -> bool {
+    c.mailboxes.iter().any(|m| {
+        m.delimiter
+            .as_deref()
+            .is_some_and(|d| !d.is_empty() && m.name.starts_with(&format!("{name}{d}")))
+    })
 }
 
 fn trash(c: &Conn) -> Result<String> {
@@ -188,6 +214,57 @@ impl ImapClient {
         }
         with_conn!(self, "CREATE", false, |c| async {
             run_checked(&mut c.session, "CREATE", &format!("CREATE {quoted}")).await?;
+            c.mailboxes = list_mailboxes(&mut c.session).await?;
+            Ok::<_, MailError>(())
+        })
+    }
+
+    /// Renames a user mailbox (its child mailboxes move with it), then refreshes the list.
+    pub async fn rename_mailbox(&self, name: &str, new_name: &str) -> Result<()> {
+        let from = quote(name)?;
+        let to = quote(new_name)?;
+        if name.eq_ignore_ascii_case("INBOX") {
+            return Err(system_mailbox(name));
+        }
+        if new_name.trim().is_empty() {
+            return Err(MailError::Invalid("new_name must not be empty".into()));
+        }
+        if role_for(new_name, &[]).is_some() {
+            return Err(MailError::Invalid(format!(
+                "{new_name} is reserved for a system mailbox"
+            )));
+        }
+        with_conn!(self, "RENAME", false, |c| async {
+            user_mailbox(c, name).await?;
+            if c.mailboxes.iter().any(|m| m.name == new_name) {
+                return Err(MailError::Invalid(format!(
+                    "a mailbox named {new_name} already exists"
+                )));
+            }
+            run_checked(&mut c.session, "RENAME", &format!("RENAME {from} {to}")).await?;
+            c.mailboxes = list_mailboxes(&mut c.session).await?;
+            Ok::<_, MailError>(())
+        })
+    }
+
+    /// Deletes an empty user mailbox without child mailboxes, then refreshes the list.
+    pub async fn delete_mailbox(&self, name: &str) -> Result<()> {
+        let quoted = quote(name)?;
+        if name.eq_ignore_ascii_case("INBOX") {
+            return Err(system_mailbox(name));
+        }
+        with_conn!(self, "DELETE", false, |c| async {
+            user_mailbox(c, name).await?;
+            if has_children(c, name) {
+                return Err(MailError::Invalid(format!("{name} has child mailboxes")));
+            }
+            let messages = c.session.status(name, "(MESSAGES)").await?.exists;
+            if messages > 0 {
+                return Err(MailError::Invalid(format!(
+                    "{name} is not empty ({messages} messages)"
+                )));
+            }
+            run_checked(&mut c.session, "DELETE", &format!("DELETE {quoted}")).await?;
             c.mailboxes = list_mailboxes(&mut c.session).await?;
             Ok::<_, MailError>(())
         })
