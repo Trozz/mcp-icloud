@@ -57,6 +57,7 @@ async fn write_tools_are_registered_without_invitation_replies() {
     assert_eq!(
         server(&fake, false).tool_names(),
         [
+            "create_calendar",
             "create_event",
             "delete_event",
             "find_free_time",

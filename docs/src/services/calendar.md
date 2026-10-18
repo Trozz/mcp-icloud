@@ -15,6 +15,7 @@ Endpoint `/calendar` (or `calendar_<tool>` under [`/mcp`](combined.md)). The cal
 | `create_event` | write | Create a timed or all-day event, optionally recurring, with alerts and (when allowed) attendees | `calendar`, `summary`, `start` and `end`, or `start_date` and `end_date` (inclusive), `location`, `description`, `timezone`, `recurrence`, `alerts_minutes_before`, `attendees` |
 | `update_event` | write | Change only the fields you pass, for the whole series, one occurrence, or this and following occurrences | `event_id`, `scope` (`series`, `occurrence`, `this_and_following`), `occurrence_start`, and any field of `create_event` |
 | `delete_event` | write | Delete the series, one occurrence, or this and following occurrences | `event_id`, `scope`, `occurrence_start` |
+| `create_calendar` | write | Create a calendar for events. The name must differ from every calendar's name, ignoring case. Returns the calendar as `list_calendars` shows it | `name`, `color` (`#RRGGBB`) |
 | `respond_to_invitation` | write | Accept, decline or tentatively accept an invitation; iCloud sends the reply to the organizer. Registered only with `ICLOUD_ALLOW_INVITES=true` | `event_id`, `response` (`accepted`, `declined`, `tentative`), `occurrence_start` |
 
 ## Addressing events
