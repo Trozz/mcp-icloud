@@ -36,13 +36,15 @@ async fn organise_and_compose_tools_are_registered() {
         "create_forward_draft",
         "create_mailbox",
         "create_reply_draft",
+        "delete_mailbox",
         "delete_messages",
         "mark_messages",
         "move_messages",
+        "rename_mailbox",
     ] {
         assert!(names.contains(&n.to_string()), "{names:?}");
     }
-    assert_eq!(names.len(), 12);
+    assert_eq!(names.len(), 14);
 }
 
 #[tokio::test]
@@ -350,4 +352,120 @@ async fn attachments_over_the_limit_save_nothing() {
         .unwrap();
     assert!(is_error(&r));
     assert_eq!(fake.messages("Drafts").len(), 1);
+}
+
+#[tokio::test]
+async fn rename_and_delete_mailbox_tools() {
+    let fake = fake().await;
+    let s = server(&fake, None);
+    json(
+        &s.create_mailbox(params(json!({"name": "ZZ Probe"})))
+            .await
+            .unwrap(),
+    );
+    let v = json(
+        &s.rename_mailbox(params(
+            json!({"name": "ZZ Probe", "new_name": "ZZ Probe Renamed"}),
+        ))
+        .await
+        .unwrap(),
+    );
+    assert_eq!(
+        v,
+        json!({"mailbox": "ZZ Probe Renamed", "renamed_from": "ZZ Probe", "renamed": true})
+    );
+    let v = json(
+        &s.delete_mailbox(params(json!({"name": "ZZ Probe Renamed"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(v, json!({"mailbox": "ZZ Probe Renamed", "deleted": true}));
+    let st = fake.state.lock().unwrap();
+    assert!(!st.mailboxes.contains_key("ZZ Probe"));
+    assert!(!st.mailboxes.contains_key("ZZ Probe Renamed"));
+}
+
+#[tokio::test]
+async fn mailbox_tools_refuse_system_and_non_empty_mailboxes() {
+    let fake = fake().await;
+    let s = server(&fake, None);
+    json(
+        &s.create_mailbox(params(json!({"name": "Receipts"})))
+            .await
+            .unwrap(),
+    );
+    json(
+        &s.move_messages(params(json!({"uids": [1], "target_mailbox": "Receipts"})))
+            .await
+            .unwrap(),
+    );
+    let results = [
+        (
+            s.delete_mailbox(params(json!({"name": "INBOX"})))
+                .await
+                .unwrap(),
+            "INBOX is a system mailbox",
+        ),
+        (
+            s.delete_mailbox(params(json!({"name": "inbox"})))
+                .await
+                .unwrap(),
+            "inbox is a system mailbox",
+        ),
+        (
+            s.delete_mailbox(params(json!({"name": "Junk"})))
+                .await
+                .unwrap(),
+            "Junk is a system mailbox",
+        ),
+        (
+            s.rename_mailbox(params(json!({"name": "Drafts", "new_name": "Old"})))
+                .await
+                .unwrap(),
+            "Drafts is a system mailbox",
+        ),
+        (
+            s.rename_mailbox(params(json!({"name": "Receipts", "new_name": "Archive"})))
+                .await
+                .unwrap(),
+            "Archive is reserved for a system mailbox",
+        ),
+        (
+            s.rename_mailbox(params(json!({"name": "Receipts", "new_name": "Receipts"})))
+                .await
+                .unwrap(),
+            "a mailbox named Receipts already exists",
+        ),
+        (
+            s.delete_mailbox(params(json!({"name": "Receipts"})))
+                .await
+                .unwrap(),
+            "Receipts is not empty (1 messages)",
+        ),
+        (
+            s.delete_mailbox(params(json!({"name": "Nope"})))
+                .await
+                .unwrap(),
+            "mailbox not found: Nope",
+        ),
+        (
+            s.rename_mailbox(params(json!({"name": "Nope", "new_name": "Other"})))
+                .await
+                .unwrap(),
+            "mailbox not found: Nope",
+        ),
+    ];
+    for (r, expected) in &results {
+        assert!(is_error(r), "{expected}");
+        assert_eq!(text(r), *expected);
+    }
+    assert!(
+        !fake
+            .log()
+            .iter()
+            .any(|l| l.starts_with("RENAME") || l.starts_with("DELETE")),
+        "{:?}",
+        fake.log()
+    );
+    assert_eq!(fake.messages("Receipts").len(), 1);
 }

@@ -166,6 +166,22 @@ pub struct CreateMailboxParams {
     pub name: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct RenameMailboxParams {
+    /// Current name of the mailbox (folder).
+    pub name: String,
+    /// New name. No mailbox may have it yet, and it must not be a system mailbox name.
+    pub new_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DeleteMailboxParams {
+    /// Name of the mailbox (folder). It must hold no messages and no child mailboxes.
+    pub name: String,
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct DraftParams {
@@ -692,6 +708,52 @@ impl MailServer {
         run("create_mailbox", async {
             self.imap.create_mailbox(&p.name).await?;
             Ok(json_result(&json!({ "mailbox": p.name, "created": true })))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Rename a mailbox (folder); its child mailboxes move with it. INBOX and system mailboxes (Sent, Drafts, Trash, Junk, Archive) cannot be renamed, and the new name must be free.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn rename_mailbox(
+        &self,
+        Parameters(p): Parameters<RenameMailboxParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "rename_mailbox");
+        run("rename_mailbox", async {
+            self.imap.rename_mailbox(&p.name, &p.new_name).await?;
+            Ok(json_result(&json!({
+                "mailbox": p.new_name,
+                "renamed_from": p.name,
+                "renamed": true,
+            })))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Delete an empty mailbox (folder) for good. Refuses INBOX, system mailboxes, and mailboxes that hold messages or child mailboxes.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn delete_mailbox(
+        &self,
+        Parameters(p): Parameters<DeleteMailboxParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::debug!(args = ?p, "delete_mailbox");
+        run("delete_mailbox", async {
+            self.imap.delete_mailbox(&p.name).await?;
+            Ok(json_result(&json!({ "mailbox": p.name, "deleted": true })))
         })
         .await
     }

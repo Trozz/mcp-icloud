@@ -56,7 +56,7 @@ async fn send_draft_is_only_registered_with_a_sender() {
     let with = server(&fake, Some(Arc::new(RecordingSender::default())));
     let names = with.tool_names();
     assert!(names.contains(&"send_draft".to_string()));
-    assert_eq!(names.len(), 13);
+    assert_eq!(names.len(), 15);
 }
 
 #[tokio::test]
