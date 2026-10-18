@@ -12,6 +12,8 @@ At startup, in this order:
 
 The self-signed certificate is fine for local use, for Claude Code with the certificate trusted, or for encrypting the hop from a tunnel or reverse proxy that skips verification. It does not work for claude.ai directly.
 
+With certificate files the server sends `Strict-Transport-Security: max-age=31536000`. With the self-signed certificate or plain HTTP it does not, so a tunnel or proxy in front sets its own policy.
+
 ## Option A: a Cloudflare tunnel
 
 The simplest way to get a trusted public address. The tunnel's edge certificate is trusted by claude.ai, and the server's self-signed certificate protects the hop from the tunnel to the server. See the Docker Compose example in [Getting started](getting-started.md#with-docker-compose-and-a-cloudflare-tunnel). In the tunnel's public hostname settings, point the service to `https://mcp-icloud:8443` and turn on **No TLS Verify**.

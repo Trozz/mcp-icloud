@@ -27,16 +27,17 @@ sequenceDiagram
 - Each endpoint (`/mail`, `/calendar`, `/contacts`, `/mcp`) is its own OAuth protected resource (RFC 9728) with metadata at `/.well-known/oauth-protected-resource/<endpoint>`.
 - Tokens are bound to the endpoint they were issued for (RFC 8707): a token for `/mail` is rejected on `/calendar`.
 - One login page and one `OAUTH_ADMIN_PASSWORD` cover every endpoint. The login page names the service being connected.
-- Access tokens last 1 hour, refresh tokens 30 days. There is no per-client revocation: rotate `OAUTH_SIGNING_KEY` to sign every client out.
+- Access tokens last 1 hour and refresh tokens 30 days, and every sign-in ends 90 days after it was made however often the connector refreshes; then you connect it again.
+- Changing `OAUTH_ADMIN_PASSWORD` ends every sign-in: each connector asks you to connect again, without being added again. Rotating `OAUTH_SIGNING_KEY` also signs every client out, and connectors must then be removed and added again. There is no per-client revocation.
 
 ## The static token
 
-`MCP_AUTH_TOKEN` is a single-owner shortcut for clients that can send a header. It is accepted on every endpoint, so treat it like the admin password: use a long random value (the server warns at startup about one shorter than 32 characters). Wrong tokens count towards the login rate limits below, so it cannot be guessed. Leave it unset if you only use claude.ai.
+`MCP_AUTH_TOKEN` is a single-owner shortcut for clients that can send a header. It is accepted on every endpoint, so treat it like the admin password: use a long random value (the server warns at startup about one shorter than 32 characters). Wrong tokens count towards the login rate limits below, so it cannot be guessed. A value with exactly two dots (the shape of a JWT) is refused at startup. Leave it unset if you only use claude.ai: then bearer tokens that are not this server's are refused without counting, so they cannot lock you out.
 
 ## Login rate limits
 
-- At most 5 failed logins or wrong bearer tokens per minute per client address, and 30 failures per minute in total. Once the total is reached, every login and the static token wait for the rest of the minute, so spreading guesses over many addresses gains nothing.
-- Trade-off: someone who keeps failing can lock you out of the login page and the static token for up to a minute; OAuth tokens already issued keep working. An expired OAuth token is never counted as a failure.
+- At most 5 failed logins per minute per client address (an IPv6 /64 counts as one address), 25 per network (an IPv4 /24 or IPv6 /48) and 30 in total. With `MCP_AUTH_TOKEN` set, wrong bearer tokens count as failed logins too. Once the total is reached, every login and the static token are refused while failures keep arriving, so spreading guesses over many addresses gains nothing.
+- Trade-off: someone who keeps failing can lock you out of the login page and the static token for as long as they keep it up; OAuth tokens already issued keep working. This server's own tokens, even expired ones, never count as failures. Without `MCP_AUTH_TOKEN`, only failed logins on the login page count.
 - The client address is the TCP peer. Behind a reverse proxy, set `TRUSTED_PROXIES` to the proxy addresses so the right-most untrusted `X-Forwarded-For` entry is used; otherwise every request shares the proxy address and the per-client limit is effectively global.
 
 ## Read-only services
@@ -55,11 +56,12 @@ Combined with the defaults (`ICLOUD_ALLOW_SEND=false`, `ICLOUD_ALLOW_INVITES=fal
 Every call of a tool that is not read-only, including refused ones, produces one audit line:
 
 ```json
-{"ts": "2026-10-18T10:00:00Z", "service": "contacts", "endpoint": "/contacts", "tool": "delete_contact", "outcome": "ok", "error_kind": null, "caller": "oauth:<client_id>", "elapsed_ms": 120}
+{"ts": "2026-10-18T10:00:00Z", "service": "contacts", "endpoint": "/contacts", "tool": "delete_contact", "outcome": "ok", "error_kind": null, "caller": "oauth:<client_id>", "subject": "owner", "elapsed_ms": 120}
 ```
 
 - `outcome` is `ok`, `error` or `refused` (a read-only service); `error_kind` is the tool error kind such as `conflict` (`read_only` for a refusal, `protocol` for a malformed call), or `null` on success.
 - `caller` is `oauth:<client_id>`, `oauth` or `static` (the `MCP_AUTH_TOKEN`).
+- `subject` is who signed in: `owner` (with `OAUTH_ADMIN_PASSWORD`) or `static` (the `MCP_AUTH_TOKEN`).
 - Arguments, ids and results are never recorded.
 - Lines go to the `audit` log target, which stays on at `info` whatever `LOG_LEVEL` says, and are appended to `AUDIT_LOG_PATH` when it is set (the file is created with mode 0600).
 - If the file cannot be written, the server logs a warning at most once a minute and the tool call still succeeds.

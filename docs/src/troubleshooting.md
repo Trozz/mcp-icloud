@@ -8,7 +8,8 @@ The server lists every configuration problem at startup and exits. Common ones:
 |---|---|
 | `PUBLIC_URL is required` | Set `PUBLIC_URL` to the external `https` address, without a path |
 | `OAUTH_SIGNING_KEY must be at least 32 bytes` | Use `openssl rand -hex 32` |
-| `OAUTH_ADMIN_PASSWORD must be at least 12 characters` | Choose a longer password |
+| `OAUTH_ADMIN_PASSWORD must be at least 12 characters, not only spaces` | Choose a longer password; with 15 or more characters the startup warning goes too |
+| `MCP_AUTH_TOKEN must not have the shape of a JWT (three dot-separated parts)` | Use a value without exactly two dots; `openssl rand -hex 32` is fine |
 | `ICLOUD_SERVICES contains an unknown service: ...` | Use names from `mail`, `calendar`, `contacts` |
 | `CALENDAR_TIMEZONE "..." is not an IANA time zone name such as Europe/London` | Use a name from the IANA list, such as `America/New_York` |
 | `..._FILE: cannot read ...` | The secret file is missing or unreadable by UID 65532 in the container |
@@ -21,6 +22,8 @@ The server lists every configuration problem at startup and exits. Common ones:
 
 ## A connector stops working with 401
 
+- Every sign-in ends 90 days after it was made, and changing `OAUTH_ADMIN_PASSWORD` ends them all: connect the connector again.
+- After upgrading from 1.1 or earlier, every connector signs in once more (see [Upgrading](operations.md#upgrading-from-11-or-earlier)).
 - Rotating `OAUTH_SIGNING_KEY` signs every client out: remove and add the connector again.
 - A token for one endpoint is not accepted on another. Make sure the connector URL is the endpoint it signed in to.
 

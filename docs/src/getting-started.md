@@ -15,7 +15,7 @@ The same password is used for mail, calendar and contacts. You can revoke it at 
 The server needs two secrets of its own:
 
 - `OAUTH_SIGNING_KEY`: at least 32 bytes, used to sign OAuth tokens. Generate one with `openssl rand -hex 32` and keep it stable: changing it signs every client out.
-- `OAUTH_ADMIN_PASSWORD`: at least 12 characters. You type it on the server's login page when you add a connector in claude.ai.
+- `OAUTH_ADMIN_PASSWORD`: at least 12 characters (15 or more avoids a startup warning). You type it on the server's login page when you add a connector in claude.ai.
 
 Optionally also `MCP_AUTH_TOKEN` (for example `openssl rand -hex 32`), a static bearer token for clients that can send a header, such as Claude Code.
 
