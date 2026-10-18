@@ -30,7 +30,7 @@ The app-specific password was revoked or mistyped, or `ICLOUD_EMAIL` (`ICLOUD_US
 
 ## Tool errors
 
-Tool errors start with a kind:
+Calendar and contacts tool errors start with a kind, for example `conflict: ...`:
 
 | Kind | Meaning |
 |---|---|
@@ -41,6 +41,9 @@ Tool errors start with a kind:
 | `auth` | iCloud rejected the login |
 | `quota` | The iCloud storage quota is full |
 | `upstream` | iCloud returned an unexpected answer; usually temporary |
+| `internal` | An unexpected error inside the server; check the log and report it if it repeats |
+
+Mail tool errors have no kind. They are plain messages that say what went wrong, such as `mailbox not found: ...` or `UIDVALIDITY of ... changed ...; re-run search_messages to get fresh uids`. The `conflict` and `quota` kinds therefore do not appear for mail.
 
 ## Contacts look out of date
 

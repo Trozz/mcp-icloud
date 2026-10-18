@@ -8,16 +8,16 @@ Endpoint `/mail` (or `mail_<tool>` under [`/mcp`](combined.md)). The mail servic
 |---|---|---|---|
 | `list_mailboxes` | read | Mailboxes with their role (Inbox, Sent, Drafts, Trash, Junk, Archive), total and unread counts | none |
 | `search_messages` | read | Search one mailbox, newest first; every filter is optional and they combine with AND. Returns summaries, the mailbox `uidvalidity` and `next_cursor` | `mailbox` (default `INBOX`), `from`, `to`, `subject`, `text`, `since`, `before` (`YYYY-MM-DD`), `unseen`, `flagged`, `limit` (1 to 100, default 25), `cursor` |
-| `get_message` | read | Headers, body and attachment list of one message. Does not mark it as read | `mailbox`, `uid`, `format` (`text`, `html` or `raw`), `max_chars` (default 20000) |
-| `get_attachment` | read | One attachment as an embedded base64 resource, up to `MAX_ATTACHMENT_BYTES` | `mailbox`, `uid`, `index` (from `get_message`) |
-| `get_thread` | read | The conversation a message belongs to, linked by Message-ID, References and In-Reply-To, from its mailbox and Sent, ordered by date | `mailbox`, `uid` |
-| `mark_messages` | write | Mark as read or unread, flagged or unflagged | `mailbox`, `uids` (1 to 100), `seen`, `flagged`, `uidvalidity` |
-| `move_messages` | write | Move messages to another mailbox | `mailbox`, `uids`, `target_mailbox`, `uidvalidity` |
-| `delete_messages` | write | Move messages to Trash; with `permanent: true`, messages already in Trash are removed for good | `mailbox`, `uids`, `permanent`, `uidvalidity` |
+| `get_message` | read | Headers, body and attachment list of one message. Does not mark it as read | `mailbox` (default `INBOX`), `uid`, `format` (`text`, `html` or `raw`), `max_chars` (default 20000) |
+| `get_attachment` | read | One attachment as an embedded base64 resource, up to `MAX_ATTACHMENT_BYTES` | `mailbox` (default `INBOX`), `uid`, `index` (from `get_message`) |
+| `get_thread` | read | The conversation a message belongs to, linked by Message-ID, References and In-Reply-To, from its mailbox and Sent, ordered by date | `mailbox` (default `INBOX`), `uid` |
+| `mark_messages` | write | Mark as read or unread, flagged or unflagged | `mailbox` (default `INBOX`), `uids` (1 to 100), `seen`, `flagged`, `uidvalidity` |
+| `move_messages` | write | Move messages to another mailbox | `mailbox` (default `INBOX`), `uids`, `target_mailbox`, `uidvalidity` |
+| `delete_messages` | write | Move messages to Trash; with `permanent: true`, messages already in Trash are removed for good | `mailbox` (default `INBOX`), `uids`, `permanent`, `uidvalidity` |
 | `create_mailbox` | write | Create a mailbox (folder) | `name` |
 | `create_draft` | write | Save a new draft in Drafts. Nothing is sent | `to`, `cc`, `bcc` (`name@example.com` or `Name <name@example.com>`), `subject`, `body_text`, `body_html` |
-| `create_reply_draft` | write | Save a threaded reply draft with the original quoted. Nothing is sent | `mailbox`, `uid`, `body_text`, `reply_all` |
-| `create_forward_draft` | write | Save a forward draft, optionally with the original attachments. Nothing is sent | `mailbox`, `uid`, `to`, `body_text`, `include_attachments` (default `true`) |
+| `create_reply_draft` | write | Save a threaded reply draft with the original quoted. Nothing is sent | `mailbox` (default `INBOX`), `uid`, `body_text`, `reply_all` |
+| `create_forward_draft` | write | Save a forward draft, optionally with the original attachments. Nothing is sent | `mailbox` (default `INBOX`), `uid`, `to`, `body_text`, `include_attachments` (default `true`) |
 | `send_draft` | write | Send a draft over iCloud SMTP, save a copy to Sent and remove the draft. Registered only with `ICLOUD_ALLOW_SEND=true` | `uid` (in Drafts), `uidvalidity` |
 
 ## Addressing messages
