@@ -14,6 +14,19 @@ Under `/mcp` every tool is prefixed with its service: `<service>_<tool>`.
 
 Descriptions, parameters and annotations are the same as on the service's own endpoint, so the [Mail](mail.md), [Calendar](calendar.md) and [Contacts](contacts.md) pages describe every tool. Only services selected by `ICLOUD_SERVICES` appear.
 
+## Prompts
+
+Every service's prompts are offered under `/mcp` with the same prefix as its tools, and their text names the prefixed tools (`mail_search_messages` here, `search_messages` on `/mail`).
+
+| Prompt | Described on |
+|---|---|
+| `mail_triage_inbox` | [Mail](mail.md#prompts) |
+| `calendar_plan_week` | [Calendar](calendar.md#prompts) |
+| `contacts_birthday_reminders` | [Contacts](contacts.md#prompts) |
+| `contacts_clean_up_duplicates` | [Contacts](contacts.md#prompts) |
+
+Only services selected by `ICLOUD_SERVICES` contribute prompts.
+
 ## Safety switches apply
 
 - A read-only service (`ICLOUD_READ_ONLY`) is read-only under `/mcp` too: its write tools are hidden and refused.

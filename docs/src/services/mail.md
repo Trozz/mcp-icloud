@@ -20,6 +20,16 @@ Endpoint `/mail` (or `mail_<tool>` under [`/mcp`](combined.md)). The mail servic
 | `create_forward_draft` | write | Save a forward draft, optionally with the original attachments. Nothing is sent | `mailbox` (default `INBOX`), `uid`, `to`, `body_text`, `include_attachments` (default `true`) |
 | `send_draft` | write | Send a draft over iCloud SMTP, save a copy to Sent and remove the draft. Registered only with `ICLOUD_ALLOW_SEND=true` | `uid` (in Drafts), `uidvalidity` |
 
+## Prompts
+
+Prompts are ready-made requests a client can offer you. They tell the model which tools to call and in what order; they change nothing by themselves.
+
+| Prompt | Arguments | What it does |
+|---|---|---|
+| `triage_inbox` | `mailbox` (default `INBOX`), `limit` (1 to 100, default 25) | Summarises the unread messages and suggests replying, flagging, moving or deleting each one. Acts only on what you approve, writes reply drafts only when you ask, and never sends |
+
+Arguments are text; a blank argument takes its default, and an invalid one (a `limit` outside 1 to 100) is refused. If a step needs a tool this server does not offer (a read-only service), the model is told to say so and skip it.
+
 ## Addressing messages
 
 Messages are addressed by mailbox plus UID. Listings also return the mailbox `uidvalidity`; pass it back to the changing tools. If the mailbox was rebuilt in the meantime (its `uidvalidity` changed), the tool refuses instead of touching a different message that now has the same UID.

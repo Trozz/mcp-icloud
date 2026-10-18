@@ -3,6 +3,7 @@ pub mod config;
 pub mod error;
 pub mod freebusy;
 pub mod ical;
+pub mod prompts;
 pub mod service;
 pub mod tools;
 pub mod tz;

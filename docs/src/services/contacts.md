@@ -21,6 +21,17 @@ Endpoint `/contacts` (or `contacts_<tool>` under [`/mcp`](combined.md)). The con
 | `update_group` | write | Rename a group, add or remove members. Removing a contact from a group does not delete it | `id`, `name`, `add_ids`, `remove_ids` |
 | `delete_group` | write | Delete a group. Its contacts are kept | `id` |
 
+## Prompts
+
+Prompts are ready-made requests a client can offer you. They tell the model which tools to call and in what order; they change nothing by themselves.
+
+| Prompt | Arguments | What it does |
+|---|---|---|
+| `birthday_reminders` | `days` (1 to 366, default 14) | Lists the birthdays and anniversaries coming up, by date, and offers to write a message for each. When the client also has the mail service, it can save the message as a draft; it never sends |
+| `clean_up_duplicates` | none | Runs `find_duplicate_contacts` and goes through the groups one at a time, explaining what a merge keeps and loses. Merges a group only after you confirm that group |
+
+Arguments are text; a blank argument takes its default, and an invalid one (a `days` outside 1 to 366) is refused. On a read-only contacts service the prompts are still offered; the model is told that merging is not available.
+
 ## Contact fields
 
 `given_name`, `family_name`, `middle_name`, `prefix`, `suffix`, `display_name`, `nickname`, `organization`, `department`, `job_title`, `birthday`, `note`, and the lists `emails`, `phones`, `urls` (each `[{value, label, preferred}]`), `addresses` (`[{street, city, region, postcode, country, label, preferred}]`), `dates` (`[{date, label}]`) and `related` (`[{name, label}]`).
