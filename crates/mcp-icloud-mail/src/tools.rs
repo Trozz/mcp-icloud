@@ -1,6 +1,7 @@
 use crate::error::{self, MailError};
 use crate::imap::proto::quote;
 use crate::imap::{ImapClient, MessageSummary, Role, SearchQuery};
+use crate::mail::attach::{self, AttachmentInput};
 use crate::mail::build::{self, BuiltMessage, DraftInput, Identity};
 use crate::mail::envelope::{envelope_recipients, strip_bcc};
 use crate::mail::parse::{self, BodyFormat};
@@ -182,6 +183,9 @@ pub struct DraftParams {
     pub body_text: String,
     /// Optional HTML body, sent alongside the text body.
     pub body_html: Option<String>,
+    /// Files to attach: at most 10, decoded total up to MAX_ATTACHMENT_BYTES.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentInput>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -197,6 +201,9 @@ pub struct ReplyParams {
     /// Also reply to the original To and Cc recipients.
     #[serde(default)]
     pub reply_all: bool,
+    /// Files to attach: at most 10, decoded total up to MAX_ATTACHMENT_BYTES.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentInput>,
 }
 
 fn yes() -> bool {
@@ -339,6 +346,7 @@ impl MailServer {
             "uid": uid,
             "uidvalidity": uidvalidity,
             "message_id": built.message_id,
+            "attachments": built.attachments,
             "note": "Saved as a draft. Review it in Mail before sending.",
         })))
     }
@@ -689,7 +697,7 @@ impl MailServer {
     }
 
     #[tool(
-        description = "Create a new draft in the Drafts mailbox. Nothing is sent.",
+        description = "Create a new draft in the Drafts mailbox, optionally with attachments (base64). Nothing is sent.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -705,9 +713,11 @@ impl MailServer {
             to = p.to.len(),
             cc = p.cc.len(),
             bcc = p.bcc.len(),
+            attachments = p.attachments.len(),
             "create_draft"
         );
         run("create_draft", async {
+            let attachments = attach::decode(&p.attachments, self.settings.max_attachment_bytes)?;
             let built = build::build_draft(
                 &self.settings.identity,
                 &DraftInput {
@@ -717,6 +727,7 @@ impl MailServer {
                     subject: p.subject,
                     body_text: p.body_text,
                     body_html: p.body_html,
+                    attachments,
                 },
             )?;
             self.save_draft(built).await
@@ -725,7 +736,7 @@ impl MailServer {
     }
 
     #[tool(
-        description = "Create a reply draft to a message (threaded, original quoted). Nothing is sent.",
+        description = "Create a reply draft to a message (threaded, original quoted), optionally with attachments (base64). Nothing is sent.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -737,8 +748,9 @@ impl MailServer {
         &self,
         Parameters(p): Parameters<ReplyParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::debug!(mailbox = %p.mailbox, uid = p.uid, reply_all = p.reply_all, "create_reply_draft");
+        tracing::debug!(mailbox = %p.mailbox, uid = p.uid, reply_all = p.reply_all, attachments = p.attachments.len(), "create_reply_draft");
         run("create_reply_draft", async {
+            let attachments = attach::decode(&p.attachments, self.settings.max_attachment_bytes)?;
             let (_, raw) = self.imap.fetch_raw(&p.mailbox, p.uid, None).await?;
             let identity = &self.settings.identity;
             let built = build::build_reply(
@@ -747,6 +759,7 @@ impl MailServer {
                 &raw,
                 &p.body_text,
                 p.reply_all,
+                &attachments,
             )?;
             self.save_draft(built).await
         })

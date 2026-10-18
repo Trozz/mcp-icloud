@@ -1,11 +1,20 @@
 mod support;
+use mcp_icloud_mail::mail::parse;
+use mcp_icloud_mail::tools::MailServer;
 use serde_json::json;
 use support::fake_imap::{FakeImap, FakeState};
-use support::tools::{is_error, json, params, server, text};
+use support::tools::{imap, is_error, json, params, server, settings, text};
 
 const PLAIN: &[u8] = b"From: Alice <alice@example.com>\r\nTo: me@icloud.com, Bob <bob@example.com>\r\nSubject: Lunch\r\nMessage-ID: <t1@example.com>\r\nDate: Wed, 15 Oct 2026 10:00:00 +0000\r\n\r\nShall we meet at noon?\r\n";
 
 const ATTACHMENT_ONLY: &[u8] = b"From: a@example.com\r\nTo: me@icloud.com\r\nSubject: scan\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b1\"\r\n\r\n--b1\r\nContent-Type: application/pdf; name=\"scan.pdf\"\r\nContent-Disposition: attachment; filename=\"scan.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--b1--\r\n";
+
+/// base64 of "%PDF-1.4\n" (9 bytes).
+const PDF_B64: &str = "JVBERi0xLjQK";
+
+fn appended(fake: &FakeImap) -> bool {
+    fake.log().iter().any(|l| l.starts_with("APPEND"))
+}
 
 async fn fake() -> FakeImap {
     let mut st = FakeState::icloud_like();
@@ -151,6 +160,7 @@ async fn create_draft_saves_to_drafts_and_keeps_bcc() {
     assert_eq!(v["mailbox"], "Drafts");
     assert_eq!(v["uid"], 1);
     assert_eq!(v["uidvalidity"], 1000);
+    assert_eq!(v["attachments"], json!([]));
     let drafts = fake.messages("Drafts");
     assert_eq!(drafts[0].flags, vec!["\\Draft", "\\Seen"]);
     let raw = raw_text(&fake, "Drafts", 0);
@@ -194,7 +204,150 @@ async fn create_forward_draft_reattaches_attachments() {
             .unwrap(),
     );
     assert_eq!(v["uidvalidity"], 1000);
+    assert_eq!(v["attachments"][0]["filename"], "scan.pdf");
+    assert_eq!(v["attachments"][0]["content_type"], "application/pdf");
     let raw = raw_text(&fake, "Drafts", 0);
     assert!(raw.contains("Subject: Fwd: scan"), "{raw}");
     assert!(raw.contains("scan.pdf"), "{raw}");
+}
+
+#[tokio::test]
+async fn create_draft_with_attachments_saves_them_and_reports_sizes() {
+    let fake = fake().await;
+    let v = json(
+        &server(&fake, None)
+            .create_draft(params(json!({
+                "to": ["bob@example.com"],
+                "subject": "Report",
+                "body_text": "Attached.",
+                "attachments": [
+                    {"filename": "report.pdf", "content_type": "Application/PDF", "content_base64": PDF_B64},
+                    {"filename": "notes.txt", "content_type": "text/plain", "content_base64": "aGVs\nbG8="}
+                ]
+            })))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        v["attachments"],
+        json!([
+            {"filename": "report.pdf", "content_type": "application/pdf", "size": 9},
+            {"filename": "notes.txt", "content_type": "text/plain", "size": 5}
+        ])
+    );
+    let raw = &fake.messages("Drafts")[0].raw;
+    let first = parse::attachment(raw, 0).unwrap();
+    assert_eq!(first.filename.as_deref(), Some("report.pdf"));
+    assert_eq!(first.mime_type, "application/pdf");
+    assert_eq!(first.contents, b"%PDF-1.4\n");
+    assert_eq!(parse::attachment(raw, 1).unwrap().contents, b"hello");
+}
+
+#[tokio::test]
+async fn create_reply_draft_with_attachment_stays_threaded() {
+    let fake = fake().await;
+    let v = json(
+        &server(&fake, None)
+            .create_reply_draft(params(json!({
+                "uid": 1,
+                "body_text": "Menu attached.",
+                "attachments": [
+                    {"filename": "menu.pdf", "content_type": "application/pdf", "content_base64": PDF_B64}
+                ]
+            })))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        v["attachments"],
+        json!([{"filename": "menu.pdf", "content_type": "application/pdf", "size": 9}])
+    );
+    let raw = raw_text(&fake, "Drafts", 0);
+    assert!(raw.contains("In-Reply-To: <t1@example.com>"), "{raw}");
+    assert!(raw.contains("Subject: Re: Lunch"), "{raw}");
+    assert!(raw.contains("> Shall we meet at noon?"), "{raw}");
+    let saved = &fake.messages("Drafts")[0].raw;
+    assert_eq!(parse::attachment(saved, 0).unwrap().contents, b"%PDF-1.4\n");
+}
+
+#[tokio::test]
+async fn invalid_attachments_save_nothing() {
+    let fake = fake().await;
+    let s = server(&fake, None);
+    let good = json!({"filename": "a.txt", "content_type": "text/plain", "content_base64": "eA=="});
+    let cases = [
+        (
+            json!([good.clone(), {"filename": "b.txt", "content_type": "text/plain", "content_base64": "data:text/plain;base64,eA=="}]),
+            "attachment 2 is not valid base64",
+        ),
+        (
+            json!([{"filename": "../a.txt", "content_type": "text/plain", "content_base64": "eA=="}]),
+            "attachment 1 filename must not contain",
+        ),
+        (
+            json!([{"filename": "a.txt", "content_type": "text/plain; charset=utf-8", "content_base64": "eA=="}]),
+            "attachment 1 content_type must be type/subtype",
+        ),
+        (
+            json!(vec![good.clone(); 11]),
+            "at most 10 attachments are allowed, got 11",
+        ),
+    ];
+    for (attachments, expected) in cases {
+        let r = s
+            .create_draft(params(
+                json!({"subject": "x", "attachments": attachments.clone()}),
+            ))
+            .await
+            .unwrap();
+        assert!(is_error(&r));
+        assert!(text(&r).contains(expected), "{}", text(&r));
+        let r = s
+            .create_reply_draft(params(
+                json!({"uid": 1, "body_text": "x", "attachments": attachments}),
+            ))
+            .await
+            .unwrap();
+        assert!(is_error(&r));
+        assert!(text(&r).contains(expected), "{}", text(&r));
+    }
+    assert!(fake.messages("Drafts").is_empty());
+    assert!(!appended(&fake));
+}
+
+#[tokio::test]
+async fn attachments_over_the_limit_save_nothing() {
+    let fake = fake().await;
+    let pdf = json!([{"filename": "r.pdf", "content_type": "application/pdf", "content_base64": PDF_B64}]);
+    let at_limit = MailServer::new(imap(&fake), None, settings(9));
+    json(
+        &at_limit
+            .create_draft(params(
+                json!({"subject": "fits", "attachments": pdf.clone()}),
+            ))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(fake.messages("Drafts").len(), 1);
+
+    let over = MailServer::new(imap(&fake), None, settings(8));
+    let r = over
+        .create_draft(params(
+            json!({"subject": "too big", "attachments": pdf.clone()}),
+        ))
+        .await
+        .unwrap();
+    assert!(is_error(&r));
+    assert_eq!(
+        text(&r),
+        "attachments total 9 bytes, larger than MAX_ATTACHMENT_BYTES (8)"
+    );
+    let r = over
+        .create_reply_draft(params(
+            json!({"uid": 1, "body_text": "x", "attachments": pdf}),
+        ))
+        .await
+        .unwrap();
+    assert!(is_error(&r));
+    assert_eq!(fake.messages("Drafts").len(), 1);
 }
