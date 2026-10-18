@@ -7,7 +7,7 @@ Endpoint `/calendar` (or `calendar_<tool>` under [`/mcp`](combined.md)). The cal
 | Tool | Kind | What it does | Key parameters |
 |---|---|---|---|
 | `list_calendars` | read | Calendars that hold events: `id`, `name`, colour and whether they can be written | none |
-| `list_events` | read | Event occurrences in a range, recurring events expanded, sorted by start. At most 500 occurrences; `truncated` is true when more exist | `start`, `end` (default today plus 7 days, at most 366 days), `calendars`, `query`, `needs_response`, `timezone` |
+| `list_events` | read | Event occurrences in a range, recurring events expanded, sorted by start. At most 500 occurrences; `truncated` is true when more exist | `start` (default today at 00:00), `end` (default 7 days after `start`, at most 366 days after it), `calendars`, `query`, `needs_response`, `timezone` |
 | `get_event` | read | One event in full: description, recurrence (in words and as RRULE), excluded occurrences, attendees, organizer, alerts, URL | `event_id`, `occurrence_start`, `timezone` |
 | `find_free_time` | read | Free slots of at least `duration_minutes`, optionally inside working hours. Events marked free, cancelled events and invitations you declined are not busy | `start`, `end`, `duration_minutes` (1 to 10080), `calendars`, `working_hours` (`start`, `end` as `HH:MM`, `days`), `timezone` |
 | `get_timezone` | read | The active time zone, where it comes from, and the configured default | none |
