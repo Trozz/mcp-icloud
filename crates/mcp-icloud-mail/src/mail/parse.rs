@@ -1,5 +1,5 @@
 use crate::error::{MailError, Result};
-use mail_parser::{HeaderValue, Message, MessageParser, MimeHeaders};
+use mail_parser::{HeaderForm, HeaderValue, Message, MessageParser, TextList};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,8 +57,8 @@ pub struct Attachment {
 pub fn decode_header_words(raw: &[u8]) -> String {
     let mut buf = raw.to_vec();
     buf.extend_from_slice(b"\r\n");
-    match mail_parser::parsers::MessageStream::new(&buf).parse_unstructured() {
-        HeaderValue::Text(t) => t.into_owned(),
+    match HeaderForm::Text.parse(&buf).value() {
+        HeaderValue::Text(t) => t.to_string(),
         _ => String::from_utf8_lossy(raw).into_owned(),
     }
 }
@@ -75,9 +75,9 @@ pub(crate) fn parse(raw: &[u8]) -> Result<Message<'_>> {
         .ok_or_else(|| MailError::Invalid("message could not be parsed".into()))
 }
 
-pub(crate) fn format_addresses(a: Option<&mail_parser::Address<'_>>) -> Vec<String> {
+pub(crate) fn format_addresses(a: Option<mail_parser::AddressList<'_>>) -> Vec<String> {
     let Some(a) = a else { return Vec::new() };
-    a.iter()
+    a.mailboxes()
         .filter_map(|addr| {
             let email = addr.address()?;
             Some(match addr.name() {
@@ -88,16 +88,13 @@ pub(crate) fn format_addresses(a: Option<&mail_parser::Address<'_>>) -> Vec<Stri
         .collect()
 }
 
-pub(crate) fn header_ids(v: &HeaderValue<'_>) -> Vec<String> {
-    match v {
-        HeaderValue::Text(t) => vec![t.to_string()],
-        HeaderValue::TextList(l) => l.iter().map(|s| s.to_string()).collect(),
-        _ => Vec::new(),
-    }
+pub(crate) fn header_ids(v: Option<TextList<'_>>) -> Vec<String> {
+    v.map(|l| l.iter().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 fn has_text_part(m: &Message<'_>, subtype: &str) -> bool {
-    m.parts.iter().any(|p| {
+    m.parts().any(|p| {
         let matches = match p.content_type() {
             Some(ct) => {
                 ct.ctype().eq_ignore_ascii_case("text")
@@ -144,7 +141,7 @@ pub fn attachments(m: &Message<'_>) -> Vec<AttachmentInfo> {
                 })
                 .unwrap_or_else(|| "application/octet-stream".into())
                 .to_ascii_lowercase(),
-            size: p.contents().len(),
+            size: p.decoded_len(),
         })
         .collect()
 }
@@ -187,7 +184,7 @@ pub fn attachment(raw: &[u8], index: usize) -> Result<Attachment> {
     Ok(Attachment {
         filename: info.filename,
         mime_type: info.mime_type,
-        contents: part.contents().to_vec(),
+        contents: part.decoded().into_owned(),
     })
 }
 
@@ -275,6 +272,37 @@ mod tests {
         assert_eq!(
             attachment(MIXED, 0).unwrap().contents,
             b"a,b\r\n1,2".to_vec()
+        );
+    }
+
+    const RELATED_WITH_INLINE_IMAGE: &[u8] = b"From: a@example.com\r\nTo: me@icloud.com\r\nSubject: newsletter\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n--outer\r\nContent-Type: multipart/related; boundary=\"rel\"\r\n\r\n--rel\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Hi <img src=\"cid:logo@example.com\"></p>\r\n--rel\r\nContent-Type: image/png; name=\"logo.png\"\r\nContent-ID: <logo@example.com>\r\nContent-Disposition: inline; filename=\"logo.png\"\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--rel--\r\n--outer\r\nContent-Type: application/pdf; name=\"scan.pdf\"\r\nContent-Disposition: attachment; filename=\"scan.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--outer--\r\n";
+
+    #[test]
+    fn attachment_indexes_match_the_listing_for_related_parts() {
+        let v = view(RELATED_WITH_INLINE_IMAGE, BodyFormat::Text, 20_000).unwrap();
+        assert!(
+            v.attachments
+                .iter()
+                .any(|a| a.filename.as_deref() == Some("scan.pdf")),
+            "{:?}",
+            v.attachments
+        );
+        for info in &v.attachments {
+            let a = attachment(RELATED_WITH_INLINE_IMAGE, info.index).unwrap();
+            assert_eq!(a.filename, info.filename);
+            assert_eq!(a.mime_type, info.mime_type);
+            assert_eq!(a.contents.len(), info.size);
+        }
+        let pdf = v
+            .attachments
+            .iter()
+            .find(|a| a.filename.as_deref() == Some("scan.pdf"))
+            .unwrap();
+        assert!(
+            attachment(RELATED_WITH_INLINE_IMAGE, pdf.index)
+                .unwrap()
+                .contents
+                .starts_with(b"%PDF-1.4")
         );
     }
 
