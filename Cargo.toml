@@ -5,13 +5,13 @@ members = ["crates/mcp-icloud-dav", "crates/mcp-icloud-mail", "crates/mcp-icloud
 [workspace.package]
 version = "0.0.0-dev"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/Trozz/mcp-icloud"
 
 [workspace.dependencies]
 # The shared MCP server base: OAuth 2.1, sign-in, TLS, routing, observability.
-mcp-server-core = "0.1"
+mcp-server-core = "0.3"
 thiserror = "2.0.21"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -32,14 +32,14 @@ metrics = "0.24.6"
 tower = { version = "0.5.3", features = ["util"] }
 http-body-util = "0.1.5"
 tempfile = "3.27.0"
-rmcp = { version = "=3.5.1", features = ["server", "macros", "transport-streamable-http-server"] }
+rmcp = { version = "=3.8.0", features = ["server", "macros", "transport-streamable-http-server"] }
 async-imap = { version = "=0.12.0", default-features = false, features = ["runtime-tokio"] }
 futures = "0.3.34"
 mail-parser = "=0.11.9"
-mail-builder = "=1.0.0"
+mail-builder = "=2.0.0"
 lettre = { version = "=0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "rustls", "ring", "webpki-roots", "builder", "hostname", "pool"] }
 html2text = "0.17.3"
-lru = "0.18.5"
+lru = "0.19.0"
 rrule = { version = "=0.14.0", default-features = false }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10.4"
