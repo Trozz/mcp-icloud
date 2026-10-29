@@ -40,8 +40,18 @@ With `AUDIT_LOG_PATH`, the audit file only grows: one short line per write. Rota
 
 - Docker: pull the new image and recreate the container (`docker compose pull && docker compose up -d`). The container is stateless.
 - Binary: replace the file and restart.
-- Connectors stay signed in across upgrades and restarts as long as `OAUTH_SIGNING_KEY` stays the same.
+- Connectors stay signed in across restarts and upgrades as long as `OAUTH_SIGNING_KEY` and `OAUTH_ADMIN_PASSWORD` stay the same, except where the release notes say otherwise. Every sign-in also ends 90 days after it was made.
 - Release notes list every change; see [Releases](releases.md).
+
+### Upgrading from 1.1 or earlier
+
+The first release built on [mcp-server-core](https://github.com/Trozz/mcp-server-core-rs) changes sign-in:
+
+- Every connector signs in once more: tokens from earlier versions lack the sign-in version and time the server now checks. Each connector asks you to connect again; you do not need to add it again. Claude Code with `MCP_AUTH_TOKEN` is unaffected.
+- From then on, every sign-in ends 90 days after it was made, and changing `OAUTH_ADMIN_PASSWORD` ends them all.
+- The server refuses to start with an `MCP_AUTH_TOKEN` that has exactly two dots, and warns about an `OAUTH_ADMIN_PASSWORD` shorter than 15 characters.
+- Audit lines gain a `subject` field (see [Security](security.md#audit-log)).
+- With certificate files (`TLS_CERT_PATH`), responses carry `Strict-Transport-Security`.
 
 ## Backups
 

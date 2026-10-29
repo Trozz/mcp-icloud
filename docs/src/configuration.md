@@ -33,8 +33,8 @@ General rules:
 | Variable | Required | Default | Example | Description |
 |---|---|---|---|---|
 | `OAUTH_SIGNING_KEY` | yes | | output of `openssl rand -hex 32` | Key that signs OAuth tokens, at least 32 bytes. Changing it signs every client out |
-| `OAUTH_ADMIN_PASSWORD` | yes | | a passphrase | Password for the server's login page, at least 12 characters |
-| `MCP_AUTH_TOKEN` | no | | output of `openssl rand -hex 32` | Static bearer token accepted on every endpoint, for clients that can send a header. Treat it like the admin password |
+| `OAUTH_ADMIN_PASSWORD` | yes | | a passphrase | Password for the server's login page, at least 12 characters (the server warns below 15). Changing it signs every connector out |
+| `MCP_AUTH_TOKEN` | no | | output of `openssl rand -hex 32` | Static bearer token accepted on every endpoint, for clients that can send a header. Treat it like the admin password. Must not contain exactly two dots |
 
 ## iCloud account
 

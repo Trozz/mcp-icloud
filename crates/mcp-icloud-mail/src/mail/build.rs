@@ -248,7 +248,7 @@ pub fn build_forward(
             b = b.attachment(
                 a.mime_type.clone(),
                 filename.clone(),
-                part.contents().to_vec(),
+                part.decoded().into_owned(),
             );
             attached.push(AttachmentSummary {
                 filename,

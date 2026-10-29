@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mcp-server-core = { path = "../mcp-server-core" }
+mcp-server-core.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
 url.workspace = true

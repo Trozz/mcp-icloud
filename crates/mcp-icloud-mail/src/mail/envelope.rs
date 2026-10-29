@@ -47,11 +47,12 @@ pub fn strip_header(raw: &[u8], name: &str) -> Vec<u8> {
 /// that chose the envelope recipients sees no Bcc header either.
 pub fn strip_bcc(raw: &[u8]) -> Result<Vec<u8>> {
     let out = strip_header(raw, "Bcc");
-    if parse(&out)?
-        .headers()
-        .iter()
-        .any(|h| h.name == HeaderName::Bcc)
-    {
+    if parse(&out)?.headers().iter().any(|h| {
+        h.name() == HeaderName::Bcc
+            || h.raw_name()
+                .trim_matches(|c: char| c.is_ascii_whitespace() || c.is_ascii_control())
+                .eq_ignore_ascii_case("bcc")
+    }) {
         return Err(MailError::Invalid(
             "the Bcc header could not be removed safely, so the draft was not sent".into(),
         ));
@@ -66,15 +67,15 @@ pub fn envelope_recipients(raw: &[u8]) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for header in m.headers() {
         if !matches!(
-            header.name,
+            header.name(),
             HeaderName::To | HeaderName::Cc | HeaderName::Bcc
         ) {
             continue;
         }
-        let HeaderValue::Address(list) = &header.value else {
+        let HeaderValue::Address(list) = header.value() else {
             continue;
         };
-        for addr in list.iter() {
+        for addr in list.mailboxes() {
             let Some(email) = addr.address() else {
                 continue;
             };
