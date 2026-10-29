@@ -1,7 +1,6 @@
 //! Scripted, stateful fake IMAP server for tests. Plain TCP, one task per connection.
 //! Implements only what mcp-icloud-mail sends, with iCloud-like mailbox names.
 
-use mail_parser::MimeHeaders;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -378,10 +377,10 @@ fn matches_search(criteria: &str, m: &FakeMessage, max: u32) -> bool {
     all
 }
 
-fn addr_list(a: Option<&mail_parser::Address<'_>>) -> String {
+fn addr_list(a: Option<mail_parser::AddressList<'_>>) -> String {
     let Some(a) = a else { return "NIL".into() };
     let items: Vec<String> = a
-        .iter()
+        .mailboxes()
         .map(|x| {
             let email = x.address().unwrap_or("");
             let (mb, host) = email.split_once('@').unwrap_or((email, ""));
@@ -399,7 +398,11 @@ fn envelope(raw: &[u8]) -> String {
     let Some(m) = mail_parser::MessageParser::default().parse(raw) else {
         return "(NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL)".into();
     };
-    let raw_header = |name: &str| m.header_raw(name).map(|v| v.trim().to_string());
+    let raw_header = |name: &str| {
+        m.headers()
+            .get(name)
+            .map(|h| String::from_utf8_lossy(h.raw_value()).trim().to_string())
+    };
     let from = addr_list(m.from());
     format!(
         "({} {} {} {} {} {} {} {} {} {})",

@@ -5,7 +5,7 @@ members = ["crates/mcp-icloud-dav", "crates/mcp-icloud-mail", "crates/mcp-icloud
 [workspace.package]
 version = "0.0.0-dev"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/Trozz/mcp-icloud"
 
@@ -35,7 +35,7 @@ tempfile = "3.27.0"
 rmcp = { version = "=3.8.0", features = ["server", "macros", "transport-streamable-http-server"] }
 async-imap = { version = "=0.12.0", default-features = false, features = ["runtime-tokio"] }
 futures = "0.3.34"
-mail-parser = "=0.11.9"
+mail-parser = "=1.0.0"
 mail-builder = "=2.0.0"
 lettre = { version = "=0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "rustls", "ring", "webpki-roots", "builder", "hostname", "pool"] }
 html2text = "0.17.3"
