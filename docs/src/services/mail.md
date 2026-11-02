@@ -9,7 +9,7 @@ Endpoint `/mail` (or `mail_<tool>` under [`/mcp`](combined.md)). The mail servic
 | `list_mailboxes` | read | Mailboxes with their role (Inbox, Sent, Drafts, Trash, Junk, Archive), total and unread counts | none |
 | `search_messages` | read | Search one mailbox, newest first; every filter is optional and they combine with AND. Returns summaries, the mailbox `uidvalidity` and `next_cursor` | `mailbox` (default `INBOX`), `from`, `to`, `subject`, `text`, `since`, `before` (`YYYY-MM-DD`), `unseen`, `flagged`, `limit` (1 to 100, default 25), `cursor` |
 | `get_message` | read | Headers, body and attachment list of one message. Does not mark it as read | `mailbox` (default `INBOX`), `uid`, `format` (`text`, `html` or `raw`), `max_chars` (default 20000) |
-| `get_attachment` | read | One attachment as an embedded base64 resource, up to `MAX_ATTACHMENT_BYTES` | `mailbox` (default `INBOX`), `uid`, `index` (from `get_message`) |
+| `get_attachment` | read | One attachment as an embedded base64 resource, up to `MAX_ATTACHMENT_BYTES`. PDF and text attachments also come back as plain text, and PNG, JPEG, GIF and WebP images as image content, so the model can read them | `mailbox` (default `INBOX`), `uid`, `index` (from `get_message`), `max_chars` (extracted text, default 20000) |
 | `get_thread` | read | The conversation a message belongs to, linked by Message-ID, References and In-Reply-To, from its mailbox and Sent, ordered by date | `mailbox` (default `INBOX`), `uid` |
 | `mark_messages` | write | Mark as read or unread, flagged or unflagged | `mailbox` (default `INBOX`), `uids` (1 to 100), `seen`, `flagged`, `uidvalidity` |
 | `move_messages` | write | Move messages to another mailbox | `mailbox` (default `INBOX`), `uids`, `target_mailbox`, `uidvalidity` |

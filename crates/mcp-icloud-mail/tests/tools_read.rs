@@ -158,6 +158,7 @@ async fn get_attachment_returns_a_blob_resource() {
     assert!(!is_error(&r), "{}", text(&r));
     let meta: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
     assert_eq!(meta["filename"], "scan.pdf");
+    assert_eq!(meta["text_extracted"], false);
     let res = &r.content[1]
         .as_resource()
         .expect("embedded resource")
