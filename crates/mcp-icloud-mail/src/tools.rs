@@ -103,6 +103,8 @@ pub struct GetAttachmentParams {
     pub uid: u32,
     /// Attachment index from get_message.
     pub index: usize,
+    /// Maximum characters of extracted text to return. Default 20000.
+    pub max_chars: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -545,7 +547,7 @@ impl MailServer {
     }
 
     #[tool(
-        description = "Download one attachment (index from get_message) as an embedded base64 resource.",
+        description = "Download one attachment (index from get_message) as an embedded base64 resource. PDF and text attachments also come back as plain text, and PNG, JPEG, GIF and WebP images as image content.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     pub async fn get_attachment(
@@ -569,6 +571,13 @@ impl MailServer {
                 p.uid,
                 p.index
             );
+            let max_chars = p.max_chars.unwrap_or(DEFAULT_MAX_CHARS);
+            let (a, text) = tokio::task::spawn_blocking(move || {
+                let text = parse::attachment_text(&a, max_chars);
+                (a, text)
+            })
+            .await
+            .map_err(|e| MailError::Unsupported(format!("text extraction failed: {e}")))?;
             let meta = json!({
                 "mailbox": p.mailbox,
                 "uid": p.uid,
@@ -577,13 +586,21 @@ impl MailServer {
                 "mime_type": a.mime_type,
                 "size": a.contents.len(),
                 "uri": uri,
+                "text_extracted": text.is_some(),
+                "text_truncated": text.as_ref().is_some_and(|(_, cut)| *cut),
             });
-            let blob = ResourceContents::blob(STANDARD.encode(&a.contents), uri)
-                .with_mime_type(a.mime_type);
-            Ok(CallToolResult::success(vec![
-                ContentBlock::text(meta.to_string()),
-                ContentBlock::resource(blob),
-            ]))
+            let data = STANDARD.encode(&a.contents);
+            let mut content = vec![ContentBlock::text(meta.to_string())];
+            if let Some((t, _)) = text {
+                content.push(ContentBlock::text(t));
+            }
+            if parse::is_viewable_image(&a.mime_type) {
+                content.push(ContentBlock::image(data.clone(), a.mime_type.clone()));
+            }
+            content.push(ContentBlock::resource(
+                ResourceContents::blob(data, uri).with_mime_type(a.mime_type),
+            ));
+            Ok(CallToolResult::success(content))
         })
         .await
     }

@@ -188,6 +188,52 @@ pub fn attachment(raw: &[u8], index: usize) -> Result<Attachment> {
     })
 }
 
+/// Bound on the decompressed content of one PDF page, against decompression bombs.
+const PDF_PAGE_MAX_DECOMPRESSED: usize = 32 * 1024 * 1024;
+
+/// The readable text of a PDF or text attachment, cut to `max_chars`, with whether it was cut.
+/// None for other types and when no text could be extracted.
+pub fn attachment_text(a: &Attachment, max_chars: usize) -> Option<(String, bool)> {
+    let mime = a.mime_type.as_str();
+    let text = if mime == "application/pdf" || a.contents.starts_with(b"%PDF-") {
+        pdf_text(&a.contents)?
+    } else if mime.starts_with("text/") || mime == "application/json" || mime == "application/xml" {
+        String::from_utf8_lossy(&a.contents).into_owned()
+    } else {
+        return None;
+    };
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(truncate(text, max_chars))
+}
+
+/// Text of every page that can be read. lopdf can panic on malformed files, so a panic counts as no text.
+fn pdf_text(data: &[u8]) -> Option<String> {
+    std::panic::catch_unwind(|| {
+        let doc = lopdf::Document::load_mem(data).ok()?;
+        let pages: Vec<String> = doc
+            .get_pages()
+            .keys()
+            .filter_map(|&n| {
+                doc.extract_text_with_limit(&[n], PDF_PAGE_MAX_DECOMPRESSED)
+                    .ok()
+            })
+            .collect();
+        Some(pages.join("\n"))
+    })
+    .ok()
+    .flatten()
+}
+
+/// Whether a MIME type is an image format that MCP clients commonly show to the model.
+pub fn is_viewable_image(mime_type: &str) -> bool {
+    matches!(
+        mime_type,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +375,99 @@ mod tests {
         assert_eq!(BodyFormat::parse(None).unwrap(), BodyFormat::Text);
         assert_eq!(BodyFormat::parse(Some("html")).unwrap(), BodyFormat::Html);
         assert!(BodyFormat::parse(Some("pdf")).is_err());
+    }
+
+    fn pdf_with_text(text: &str) -> Vec<u8> {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{Document, Object, Stream, dictionary};
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![72.into(), 700.into()]),
+                Operation::new("Tj", vec![Object::string_literal(text)]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "Contents" => content_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1,
+                "Resources" => resources_id,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    }
+
+    fn file(mime_type: &str, contents: &[u8]) -> Attachment {
+        Attachment {
+            filename: None,
+            mime_type: mime_type.into(),
+            contents: contents.to_vec(),
+        }
+    }
+
+    #[test]
+    fn pdf_text_is_extracted() {
+        let a = file("application/pdf", &pdf_with_text("Invoice total 42"));
+        let (text, cut) = attachment_text(&a, 20_000).unwrap();
+        assert!(text.contains("Invoice total 42"), "{text:?}");
+        assert!(!cut);
+    }
+
+    #[test]
+    fn pdf_sent_as_octet_stream_is_detected_by_signature() {
+        let a = file("application/octet-stream", &pdf_with_text("Hello"));
+        assert!(attachment_text(&a, 20_000).unwrap().0.contains("Hello"));
+    }
+
+    #[test]
+    fn broken_pdf_has_no_text() {
+        assert_eq!(
+            attachment_text(&file("application/pdf", b"%PDF-1.4\n"), 20_000),
+            None
+        );
+        assert_eq!(
+            attachment_text(&file("application/pdf", b"\x00\xff junk"), 20_000),
+            None
+        );
+    }
+
+    #[test]
+    fn text_attachments_are_returned_and_truncated() {
+        let a = file("text/csv", b"a,b\n1,2\n");
+        assert_eq!(
+            attachment_text(&a, 20_000),
+            Some(("a,b\n1,2\n".into(), false))
+        );
+        assert_eq!(attachment_text(&a, 3), Some(("a,b".into(), true)));
+    }
+
+    #[test]
+    fn binary_attachments_have_no_text() {
+        assert_eq!(
+            attachment_text(&file("image/png", b"\x89PNG"), 20_000),
+            None
+        );
+        assert!(is_viewable_image("image/png"));
+        assert!(!is_viewable_image("image/heic"));
     }
 }

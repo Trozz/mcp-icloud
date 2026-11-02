@@ -29,6 +29,7 @@ mail-builder.workspace = true
 lettre.workspace = true
 html2text.workspace = true
 lru.workspace = true
+lopdf.workspace = true
 
 [dev-dependencies]
 tokio-util.workspace = true
